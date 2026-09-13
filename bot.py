@@ -16,7 +16,7 @@ from aiogram.types import (
 )
 import aiohttp
 
-TOKEN = "8517015536:AAGoPOUXHAJkWVhCD813cTpJWSnqcWd8jBQ"
+TOKEN = "8844658209:AAH41cGWIdMiSLQq8PO5VNU_qds7vWJpmmE"
 
 router = Router()
 
