@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import sys
+import sqlite3
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import CommandStart
@@ -15,27 +16,52 @@ from aiogram.types import (
 )
 import aiohttp
 
-TOKEN = "8844658209:AAH41cGWIdMiSLQq8PO5VNU_qds7vWJpmmE"
+TOKEN = "8517015536:AAGoPOUXHAJkWVhCD813cTpJWSnqcWd8jBQ"
 
 router = Router()
+
+# --- راه‌اندازی و اتصال به پایگاه داده SQLite ---
+def init_db():
+    conn = sqlite3.connect("bot_database.db")
+    cursor = conn.cursor()
+    
+    # جدول فایل‌ها
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS files (
+            file_key TEXT PRIMARY KEY,
+            user_id INTEGER,
+            file_id TEXT,
+            file_type TEXT,
+            file_name TEXT,
+            deleted INTEGER DEFAULT 0
+        )
+    """)
+    
+    # جدول لینک‌های کاربران
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            long_url TEXT,
+            short_url TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+init_db()
 
 # وضعیت‌های ربات برای ثبت نام فایل و لینک
 class UploadStates(StatesGroup):
     waiting_for_file_name = State()
     waiting_for_new_link = State()
 
-# دیتابیس‌ها
-user_files_db = {}
+# دیتابیس موقت برای نگهداری فایل در حال آپلود هر کاربر پیش از نام‌گذاری
 user_temp_file = {}
-shared_files_db = {}
-
-# دیتابیس موقت برای لینک‌های کاربران
-user_links_db = {}
-user_temp_link = {}
 
 # --- کیبوردها ---
 
-# منوی اصلی (جایگاه خدمات لینک و مدیریت فایل‌ها جابه‌جا شد)
+# منوی اصلی (مدیریت فایل‌ها سمت چپ، خدمات لینک سمت راست)
 main_menu_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="🗂️ مدیریت فایل‌ها"), KeyboardButton(text="🔗 خدمات لینک")],
@@ -87,20 +113,27 @@ async def command_start_handler(message: Message, state: FSMContext) -> None:
     args = message.text.split(maxsplit=1)
     if len(args) > 1 and args[1].startswith("file_"):
         file_key = args[1].replace("file_", "")
-        if file_key in shared_files_db:
-            file_data = shared_files_db[file_key]
-            if file_data.get("deleted", False):
+        
+        conn = sqlite3.connect("bot_database.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT file_id, file_type, deleted FROM files WHERE file_key = ?", (file_key,))
+        row = cursor.fetchone()
+        conn.close()
+
+        if row:
+            file_id, file_type, deleted = row
+            if deleted == 1:
                 await message.answer("⚠️ متأسفانه فایل مورد نظر توسط کاربر حذف شده است. ❌")
             else:
                 await message.answer("🎁 این هم فایل درخواستی شما: 👇")
-                if file_data["type"] == "document":
-                    await message.answer_document(file_data["file_id"])
-                elif file_data["type"] == "video":
-                    await message.answer_video(file_data["file_id"])
-                elif file_data["type"] == "audio":
-                    await message.answer_audio(file_data["file_id"])
-                elif file_data["type"] == "photo":
-                    await message.answer_photo(file_data["file_id"])
+                if file_type == "document":
+                    await message.answer_document(file_id)
+                elif file_type == "video":
+                    await message.answer_video(file_id)
+                elif file_type == "audio":
+                    await message.answer_audio(file_id)
+                elif file_type == "photo":
+                    await message.answer_photo(file_id)
         else:
             await message.answer("⚠️ متأسفانه فایل مورد نظر پیدا نشد یا منقضی شده است. ❌")
 
@@ -186,11 +219,13 @@ async def process_new_link(message: Message, state: FSMContext) -> None:
 
     if short_result and short_result.startswith("http"):
         user_id = message.from_user.id
-        if user_id not in user_links_db:
-            user_links_db[user_id] = []
         
-        link_item = {"long": user_link, "short": short_result}
-        user_links_db[user_id].append(link_item)
+        # ذخیره در پایگاه داده SQLite
+        conn = sqlite3.connect("bot_database.db")
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO links (user_id, long_url, short_url) VALUES (?, ?, ?)", (user_id, user_link, short_result))
+        conn.commit()
+        conn.close()
 
         await state.clear()
         await waiting_msg.edit_text(
@@ -210,7 +245,13 @@ async def list_user_links(message: Message, state: FSMContext) -> None:
     await state.clear()
     user_id = message.from_user.id
 
-    if user_id not in user_links_db or not user_links_db[user_id]:
+    conn = sqlite3.connect("bot_database.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT long_url, short_url FROM links WHERE user_id = ?", (user_id,))
+    rows = cursor.fetchall()
+    conn.close()
+
+    if not rows:
         await message.answer(
             "📭 شما هنوز هیچ لینکی در ربات ذخیره نکرده‌اید. ⚠️",
             reply_markup=link_services_keyboard
@@ -218,8 +259,8 @@ async def list_user_links(message: Message, state: FSMContext) -> None:
         return
 
     links_text = "📋 لیست لینک‌های کوتاه شده‌ی شما: 👇\n\n"
-    for idx, item in enumerate(user_links_db[user_id], 1):
-        links_text += f"{idx}. اصلی: {item['long']}\n   کوتاه: `{item['short']}`\n\n"
+    for idx, item in enumerate(rows, 1):
+        links_text += f"{idx}. اصلی: {item[0]}\n   کوتاه: `{item[1]}`\n\n"
 
     await message.answer(
         links_text,
@@ -307,20 +348,20 @@ async def save_file_name(message: Message, state: FSMContext) -> None:
         return
 
     file_info = user_temp_file.pop(user_id)
-    file_key = f"{user_id}_{len(shared_files_db) + 1}"
+    
+    # تولید کلیدتازه بر اساس شمارش کل فایل‌های دیتابیس
+    conn = sqlite3.connect("bot_database.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM files")
+    count = cursor.fetchone()[0]
+    file_key = f"{user_id}_{count + 1}"
 
-    file_data = {
-        "file_id": file_info["file_id"],
-        "type": file_info["type"],
-        "name": file_name,
-        "deleted": False
-    }
-
-    shared_files_db[file_key] = file_data
-
-    if user_id not in user_files_db:
-        user_files_db[user_id] = {}
-    user_files_db[user_id][file_key] = file_data
+    cursor.execute("""
+        INSERT INTO files (file_key, user_id, file_id, file_type, file_name, deleted)
+        VALUES (?, ?, ?, ?, ?, 0)
+    """, (file_key, user_id, file_info["file_id"], file_info["type"], file_name))
+    conn.commit()
+    conn.close()
 
     await state.update_data(current_file_key=file_key)
     await state.set_state(None)
@@ -341,10 +382,16 @@ async def get_download_link(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     file_key = data.get("current_file_key")
 
-    if file_key and file_key in shared_files_db and not shared_files_db[file_key]["deleted"]:
+    conn = sqlite3.connect("bot_database.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT file_name, deleted FROM files WHERE file_key = ?", (file_key,))
+    row = cursor.fetchone()
+    conn.close()
+
+    if file_key and row and row[1] == 0:
         bot_info = await message.bot.get_me()
         share_link = f"https://t.me/{bot_info.username}?start=file_{file_key}"
-        file_name = shared_files_db[file_key]["name"]
+        file_name = row[0]
 
         await message.answer(
             f"🔗 لینک اختصاصی دانلود فایل (<b>{file_name}</b>): 📥\n{share_link}\n\n✨ هرکس روی این لینک کلیک کند، ربات مستقیماً فایل را به او تحویل می‌دهد! 🚀",
@@ -363,7 +410,13 @@ async def list_user_files(message: Message, state: FSMContext) -> None:
     await state.clear()
     user_id = message.from_user.id
 
-    if user_id not in user_files_db or not user_files_db[user_id]:
+    conn = sqlite3.connect("bot_database.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT file_key, file_name FROM files WHERE user_id = ? AND deleted = 0", (user_id,))
+    rows = cursor.fetchall()
+    conn.close()
+
+    if not rows:
         await message.answer(
             "📭 شما هنوز هیچ فایلی در ربات آپلود نکرده‌اید. ⚠️",
             reply_markup=file_management_keyboard
@@ -371,10 +424,8 @@ async def list_user_files(message: Message, state: FSMContext) -> None:
         return
 
     inline_keyboard = []
-    for file_key, f_data in user_files_db[user_id].items():
-        if f_data["deleted"]:
-            continue
-        btn_view = InlineKeyboardButton(text=f"📄 {f_data['name']}", callback_data=f"view_{file_key}")
+    for file_key, file_name in rows:
+        btn_view = InlineKeyboardButton(text=f"📄 {file_name}", callback_data=f"view_{file_key}")
         btn_delete = InlineKeyboardButton(text="🗑️ حذف فایل", callback_data=f"del_{file_key}")
         inline_keyboard.append([btn_view, btn_delete])
 
@@ -393,36 +444,42 @@ async def list_user_files(message: Message, state: FSMContext) -> None:
 @router.callback_query(F.data.startswith("view_") | F.data.startswith("del_"))
 async def process_file_callback(callback_query):
     data = callback_query.data
-    user_id = callback_query.from_user.id
     action, file_key = data.split("_", 1)
 
-    if file_key not in shared_files_db:
+    conn = sqlite3.connect("bot_database.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT file_id, file_type, file_name, deleted FROM files WHERE file_key = ?", (file_key,))
+    row = cursor.fetchone()
+
+    if not row:
+        conn.close()
         await callback_query.answer("⚠️ این فایل دیگر وجود ندارد. ❌", show_alert=True)
         return
 
-    file_data = shared_files_db[file_key]
+    file_id, file_type, file_name, deleted = row
 
     if action == "view":
-        if file_data["deleted"]:
+        conn.close()
+        if deleted == 1:
             await callback_query.answer("⚠️ این فایل حذف شده است. ❌", show_alert=True)
             return
         
-        await callback_query.message.answer(f"📦 فایل درخواستی شما (نام: {file_data['name']}): 📥")
-        if file_data["type"] == "document":
-            await callback_query.message.answer_document(file_data["file_id"])
-        elif file_data["type"] == "video":
-            await callback_query.message.answer_video(file_data["file_id"])
-        elif file_data["type"] == "audio":
-            await callback_query.message.answer_audio(file_data["file_id"])
-        elif file_data["type"] == "photo":
-            await callback_query.message.answer_photo(file_data["file_id"])
+        await callback_query.message.answer(f"📦 فایل درخواستی شما (نام: {file_name}): 📥")
+        if file_type == "document":
+            await callback_query.message.answer_document(file_id)
+        elif file_type == "video":
+            await callback_query.message.answer_video(file_id)
+        elif file_type == "audio":
+            await callback_query.message.answer_audio(file_id)
+        elif file_type == "photo":
+            await callback_query.message.answer_photo(file_id)
             
         await callback_query.answer("✅ فایل ارسال شد. 🚀")
 
     elif action == "del":
-        file_data["deleted"] = True
-        if user_id in user_files_db and file_key in user_files_db[user_id]:
-            del user_files_db[user_id][file_key]
+        cursor.execute("UPDATE files SET deleted = 1 WHERE file_key = ?", (file_key,))
+        conn.commit()
+        conn.close()
 
         await callback_query.answer("🗑️ فایل با موفقیت حذف شد. ✅", show_alert=True)
         try:
