@@ -107,18 +107,20 @@ back_keyboard = ReplyKeyboardMarkup(
 )
 
 
-async def shorten_url(long_url: str) -> str:
-    """استفاده از سرویس رایگان و پرسرعت is.gd برای کوتاه کردن واقعی لینک‌ها"""
-    api_url = f"https://is.gd/create.php?format=simple&url={long_url}"
+async def shorten_url_b2n(long_url: str) -> str:
+    """کوتاه‌کننده لینک با استفاده از API سایت b2n.ir"""
+    api_url = f"https://b2n.ir/api.php?url={long_url}"
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(api_url, timeout=10) as response:
+        timeout = aiohttp.ClientTimeout(total=7)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(api_url) as response:
                 if response.status == 200:
-                    short = await response.text()
-                    if short.startswith("http"):
-                        return short.strip()
+                    short_url = await response.text()
+                    short_url = short_url.strip()
+                    if short_url.startswith("http"):
+                        return short_url
     except Exception as e:
-        logging.error(f"Error shortening URL: {e}")
+        logging.warning(f"b2n.ir failed: {e}")
     return None
 
 
@@ -188,7 +190,7 @@ async def link_services_menu(message: Message, state: FSMContext) -> None:
 async def add_new_link_prompt(message: Message, state: FSMContext) -> None:
     await state.set_state(UploadStates.waiting_for_link_url)
     await message.answer(
-        "🔗 لطفاً لینک طولانی خود را ارسال کنید تا آن را کوتاه کنم: 📝✨",
+        "🔗 لطفاً لینک طولانی خود را ارسال کنید تا با **b2n.ir** آن را کوتاه کنم: 📝✨",
         reply_markup=back_keyboard
     )
 
@@ -201,6 +203,10 @@ async def process_link_url(message: Message, state: FSMContext) -> None:
     if user_link == "🔙 بازگشت":
         await state.clear()
         await message.answer("🔙 به بخش خدمات لینک برگشتید: 👇", reply_markup=link_services_keyboard)
+        return
+
+    if not user_link.startswith("http://") and not user_link.startswith("https://"):
+        await message.answer("⚠️ لطفاً یک لینک معتبر که با http:// یا https:// شروع می‌شود ارسال کنید: 👇", reply_markup=back_keyboard)
         return
 
     user_temp_link[user_id] = {"long_url": user_link}
@@ -228,13 +234,20 @@ async def process_link_name(message: Message, state: FSMContext) -> None:
 
     long_url = user_temp_link.pop(user_id)["long_url"]
 
-    waiting_msg = await message.answer("⏳ در حال کوتاه‌سازی لینک... 🔄")
+    waiting_msg = await message.answer("⏳ در حال کوتاه‌سازی لینک از طریق b2n.ir...")
 
-    # کوتاه کردن واقعی لینک از طریق سرویس خارجی
-    short_result = await shorten_url(long_url)
+    short_result = await shorten_url_b2n(long_url)
+
+    try:
+        await waiting_msg.delete()
+    except Exception:
+        pass
 
     if not short_result:
-        await waiting_msg.edit_text("❌ خطا در کوتاه‌سازی لینک. لطفاً از معتبر بودن لینک مطمئن شده و دوباره تلاش کنید.", reply_markup=link_services_keyboard)
+        await message.answer(
+            "⚠️ خطا در ارتباط با سایت b2n.ir. لطفاً لحظاتی دیگر دوباره تلاش کنید.",
+            reply_markup=link_services_keyboard
+        )
         await state.clear()
         return
 
@@ -254,19 +267,17 @@ async def process_link_name(message: Message, state: FSMContext) -> None:
         conn.close()
     except Exception as e:
         logging.error(f"Database error in link creation: {e}")
-        await waiting_msg.edit_text("⚠️ خطا در ذخیره اطلاعات در دیتابیس. لطفاً دوباره تلاش کنید.", reply_markup=link_services_keyboard)
+        await message.answer("⚠️ خطا در ذخیره اطلاعات در دیتابیس. لطفاً دوباره تلاش کنید.", reply_markup=link_services_keyboard)
         await state.clear()
         return
 
     await state.clear()
-    await waiting_msg.edit_text(
-        f"🎉 لینک شما با موفقیت کوتاه و ذخیره شد! ✅\n\n"
-        f"📌 نام لینک: <b>{link_name}</b>\n"
-        f"🔗 لینک کوتاه شده:\n`{short_result}`",
-        parse_mode="HTML"
-    )
     await message.answer(
-        "🔙 بازگشت به بخش خدمات لینک: 👇",
+        f"🎉 لینک شما با موفقیت توسط **b2n.ir** کوتاه شد! ✅\n\n"
+        f"📌 نام لینک: <b>{link_name}</b>\n"
+        f"🌐 لینک اصلی:\n{long_url}\n\n"
+        f"🔗 لینک کوتاه شده جهانی:\n`{short_result}`",
+        parse_mode="HTML",
         reply_markup=link_services_keyboard
     )
 
@@ -410,7 +421,7 @@ async def process_file_callback(callback_query: CallbackQuery):
         cursor.close()
         conn.close()
         if deleted == 1:
-            await callback_query.answer("⚠️ این فایل حذف شده است. ❌", show_alert=True)
+            await callback_query.answer("⚠️ این لینک حذف شده است. ❌", show_alert=True)
             return
         
         bot_info = await callback_query.bot.get_me()
@@ -418,7 +429,7 @@ async def process_file_callback(callback_query: CallbackQuery):
         
         display_name = file_name if file_name else "فایل اختصاصی"
         await callback_query.message.answer(
-            f"🔗 لینک کوتاه شده اختصاصی برای فایل (<b>{display_name}</b>):\n\n`{share_link}`",
+            f"🔗 لینک اختصاصی برای فایل (<b>{display_name}</b>):\n\n`{share_link}`",
             parse_mode="HTML"
         )
         await callback_query.answer("✅ لینک فایل ارسال شد. 🚀")
