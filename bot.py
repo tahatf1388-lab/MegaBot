@@ -2,6 +2,7 @@ import asyncio
 import logging
 import sys
 import os
+import aiohttp
 import psycopg2
 from urllib.parse import urlparse
 
@@ -17,14 +18,12 @@ from aiogram.types import (
     InlineKeyboardButton,
     CallbackQuery
 )
-import aiohttp
 
 TOKEN = "8844658209:AAH41cGWIdMiSLQq8PO5VNU_qds7vWJpmmE"
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 router = Router()
 
-# --- راه‌اندازی و اتصال به پایگاه داده PostgreSQL ---
 def get_db_connection():
     parsed_url = urlparse(DATABASE_URL)
     conn = psycopg2.connect(
@@ -40,7 +39,6 @@ def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # جدول فایل‌ها
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS files (
             file_key TEXT PRIMARY KEY,
@@ -52,7 +50,6 @@ def init_db():
         )
     """)
     
-    # جدول لینک‌های کاربران
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS links (
             id SERIAL PRIMARY KEY,
@@ -70,17 +67,14 @@ def init_db():
 
 init_db()
 
-# وضعیت‌های ربات برای ثبت نام فایل و لینک
 class UploadStates(StatesGroup):
     waiting_for_file_name = State()
     waiting_for_link_url = State()
     waiting_for_link_name = State()
 
-# دیتابیس موقت برای نگهداری موقت اطلاعات قبل از ذخیره نهایی
 user_temp_file = {}
 user_temp_link = {}
 
-# --- کیبوردها (ریپلای پایین صفحه) ---
 main_menu_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="🗂️ مدیریت فایل‌ها"), KeyboardButton(text="🔗 خدمات لینک")],
@@ -113,19 +107,12 @@ back_keyboard = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
-file_received_keyboard = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="📥 دریافت لینک دانلود")],
-        [KeyboardButton(text="🔙 بازگشت")]
-    ],
-    resize_keyboard=True
-)
-
 
 @router.message(CommandStart())
 async def command_start_handler(message: Message, state: FSMContext) -> None:
     await state.clear()
     args = message.text.split(maxsplit=1)
+    
     if len(args) > 1 and args[1].startswith("file_"):
         file_key = args[1].replace("file_", "")
         
@@ -183,8 +170,6 @@ async def upload_menu(message: Message, state: FSMContext) -> None:
     )
 
 
-# --- بخش خدمات لینک ---
-
 @router.message(F.text == "🔗 خدمات لینک")
 async def link_services_menu(message: Message, state: FSMContext) -> None:
     await state.clear()
@@ -201,23 +186,6 @@ async def add_new_link_prompt(message: Message, state: FSMContext) -> None:
         "🔗 لطفاً لینک طولانی خود را ارسال کنید تا آن را کوتاه کنم: 📝✨",
         reply_markup=back_keyboard
     )
-
-
-async def shorten_url(long_url: str) -> str:
-    api_url = f"https://tinyurl.com/api-create.php?url={long_url}"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-    }
-    async with aiohttp.ClientSession() as session:
-        try:
-            async with session.get(api_url, headers=headers, timeout=7) as response:
-                if response.status == 200:
-                    short_url = await response.text()
-                    return short_url.strip()
-                return None
-        except Exception as e:
-            logging.error(f"Error shortening URL: {e}")
-            return None
 
 
 @router.message(UploadStates.waiting_for_link_url, F.text)
@@ -259,37 +227,50 @@ async def process_link_name(message: Message, state: FSMContext) -> None:
 
     long_url = user_temp_link.pop(user_id)["long_url"]
 
-    waiting_msg = await message.answer("⏳ در حال کوتاه کردن لینک... 🔄")
-    short_result = await shorten_url(long_url)
+    waiting_msg = await message.answer("⏳ در حال کوتاه کردن لینک با سرویس خارجی... 🔄")
+    
+    short_result = None
+    api_url = f"https://is.gd/create.php?format=simple&url={long_url}"
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(api_url, timeout=10) as response:
+                if response.status == 200:
+                    short_result = await response.text()
+                    short_result = short_result.strip()
+    except Exception as e:
+        logging.error(f"Error shortening link: {e}")
 
-    if short_result and short_result.startswith("http"):
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM links")
-        count = cursor.fetchone()[0]
-        link_id = f"link_{user_id}_{count + 1}"
-
-        cursor.execute("""
-            INSERT INTO links (link_id, user_id, link_name, long_url, short_url, deleted)
-            VALUES (%s, %s, %s, %s, %s, 0)
-        """, (link_id, user_id, link_name, long_url, short_result))
-        conn.commit()
-        cursor.close()
-        conn.close()
-
+    if not short_result or not short_result.startswith("http"):
+        await waiting_msg.edit_text("⚠️ خطا در ارتباط با سرویس کوتاه‌کننده لینک. لطفاً دوباره تلاش کنید. ❌")
         await state.clear()
-        await waiting_msg.edit_text(
-            f"🎉 لینک شما با موفقیت کوتاه و ذخیره شد! ✅\n\n"
-            f"📌 نام لینک: <b>{link_name}</b>\n"
-            f"🔗 لینک کوتاه شده:\n`{short_result}`",
-            parse_mode="HTML"
-        )
-        await message.answer(
-            "🔙 بازگشت به بخش خدمات لینک: 👇",
-            reply_markup=link_services_keyboard
-        )
-    else:
-        await waiting_msg.edit_text("❌ خطا در کوتاه‌کردن لینک. لطفاً دوباره تلاش کنید.")
+        return
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM links")
+    count = cursor.fetchone()[0]
+    link_id = f"link_{user_id}_{count + 1}"
+
+    cursor.execute("""
+        INSERT INTO links (link_id, user_id, link_name, long_url, short_url, deleted)
+        VALUES (%s, %s, %s, %s, %s, 0)
+    """, (link_id, user_id, link_name, long_url, short_result))
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+    await state.clear()
+    await waiting_msg.edit_text(
+        f"🎉 لینک شما با موفقیت کوتاه و ذخیره شد! ✅\n\n"
+        f"📌 نام لینک: <b>{link_name}</b>\n"
+        f"🔗 لینک کوتاه شده:\n`{short_result}`",
+        parse_mode="HTML"
+    )
+    await message.answer(
+        "🔙 بازگشت به بخش خدمات لینک: 👇",
+        reply_markup=link_services_keyboard
+    )
 
 
 @router.message(F.text == "📋 لینک‌های من")
@@ -332,9 +313,9 @@ async def list_user_links(message: Message, state: FSMContext) -> None:
 @router.callback_query(F.data.startswith("vlink_") | F.data.startswith("dlink_"))
 async def process_link_callback(callback_query: CallbackQuery):
     data = callback_query.data
-    parts = data.split("_")
-    action = parts[0] # vlink یا dlink
-    link_key_id = "_".join(parts[1:])
+    parts = data.split("_", 1)
+    action = parts[0]
+    link_key_id = parts[1]
 
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -357,9 +338,9 @@ async def process_link_callback(callback_query: CallbackQuery):
             return
         
         await callback_query.message.answer(
-            f"📊 **اطلاعات لینک (<b>{link_name}</b>):**\n\n"
+            f"📊 **اطلاعات لینک ({link_name}):**\n\n"
             f"🌐 لینک اصلی (طولانی):\n`{long_url}`\n\n"
-            f"🔗 لینک کوتاه شده:\n`{short_url}`",
+            f"🔗 لینک کوتاه شده:\n`{short_result}`",
             parse_mode="Markdown"
         )
         await callback_query.answer("✅ اطلاعات لینک ارسال شد. 🚀")
@@ -369,148 +350,12 @@ async def process_link_callback(callback_query: CallbackQuery):
         conn.commit()
         cursor.close()
         conn.close()
-
+        
         await callback_query.answer("🗑️ لینک با موفقیت حذف شد. ✅", show_alert=True)
         try:
-            await callback_query.message.edit_text("✅ این لینک از لیست شما حذف شد. 🗑️")
+            await callback_query.message.edit_text("🗑️ این لینک از لیست شما حذف شد.")
         except Exception:
             pass
-
-
-@router.message(F.text == "👤 حساب کاربری")
-async def user_account_handler(message: Message, state: FSMContext) -> None:
-    await state.clear()
-    await message.answer(
-        "👤 **اطلاعات حساب کاربری شما:** 📊\n\n✨ وضعیت اشتراک: عادی 🌟\n🎁 موجودی ترافیک: رایگان 🚀",
-        parse_mode="Markdown",
-        reply_markup=main_menu_keyboard
-    )
-
-
-@router.message(F.text == "🔙 بازگشت")
-async def back_action(message: Message, state: FSMContext) -> None:
-    await state.clear()
-    await message.answer(
-        "🔙 به منوی قبلی برگشتید: 👇",
-        reply_markup=main_menu_keyboard
-    )
-
-
-@router.message(F.text == "🔙 بازگشت به منوی اصلی")
-async def back_to_main(message: Message, state: FSMContext) -> None:
-    await state.clear()
-    await message.answer(
-        "🏠 به منوی اصلی برگشتید: 👇",
-        reply_markup=main_menu_keyboard
-    )
-
-
-@router.message(F.document | F.video | F.audio | F.photo)
-async def handle_files(message: Message, state: FSMContext) -> None:
-    user_id = message.from_user.id
-    
-    if message.document:
-        file_id = message.document.file_id
-        file_type = "document"
-    elif message.video:
-        file_id = message.video.file_id
-        file_type = "video"
-    elif message.audio:
-        file_id = message.audio.file_id
-        file_type = "audio"
-    elif message.photo:
-        file_id = message.photo[-1].file_id
-        file_type = "photo"
-    else:
-        return
-
-    user_temp_file[user_id] = {
-        "file_id": file_id,
-        "type": file_type
-    }
-
-    await state.set_state(UploadStates.waiting_for_file_name)
-    await message.answer(
-        "✅ فایل با موفقیت دریافت شد. 📁\n\n✍️ لطفاً یک نام (فقط به صورت متن) برای این فایل انتخاب و ارسال کنید: 👇",
-        reply_markup=back_keyboard
-    )
-
-
-@router.message(UploadStates.waiting_for_file_name, F.text)
-async def save_file_name(message: Message, state: FSMContext) -> None:
-    user_id = message.from_user.id
-    file_name = message.text.strip()
-
-    if file_name == "🔙 بازگشت":
-        await state.clear()
-        await message.answer(
-            "🔙 به بخش مدیریت فایل‌ها برگشتید: 👇",
-            reply_markup=file_management_keyboard
-        )
-        return
-
-    if user_id not in user_temp_file:
-        await message.answer("⚠️ خطایی رخ داد. لطفاً دوباره فایل خود را ارسال کنید. ❌", reply_markup=file_management_keyboard)
-        await state.clear()
-        return
-
-    file_info = user_temp_file.pop(user_id)
-    
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM files")
-    count = cursor.fetchone()[0]
-    file_key = f"{user_id}_{count + 1}"
-
-    cursor.execute("""
-        INSERT INTO files (file_key, user_id, file_id, file_type, file_name, deleted)
-        VALUES (%s, %s, %s, %s, %s, 0)
-    """, (file_key, user_id, file_info["file_id"], file_info["type"], file_name))
-    conn.commit()
-    cursor.close()
-    conn.close()
-
-    await state.update_data(current_file_key=file_key)
-    await state.set_state(None)
-
-    await message.answer(
-        f"🎉 نام فایل با موفقیت ثبت شد: <b>{file_name}</b> ✅\n\nحالا روی دکمه‌ی زیر کلیک کنید تا لینک دانلود را دریافت کنید: 👇",
-        reply_markup=file_received_keyboard
-    )
-
-
-@router.message(UploadStates.waiting_for_file_name)
-async def invalid_file_name(message: Message) -> None:
-    await message.answer("⚠️ لطفاً نام فایل را **فقط به صورت متن** ارسال کنید: ❌")
-
-
-@router.message(F.text == "📥 دریافت لینک دانلود")
-async def get_download_link(message: Message, state: FSMContext) -> None:
-    data = await state.get_data()
-    file_key = data.get("current_file_key")
-
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT file_name, deleted FROM files WHERE file_key = %s", (file_key,))
-    row = cursor.fetchone()
-    cursor.close()
-    conn.close()
-
-    if file_key and row and row[1] == 0:
-        bot_info = await message.bot.get_me()
-        share_link = f"https://t.me/{bot_info.username}?start=file_{file_key}"
-        file_name = row[0]
-
-        await message.answer(
-            f"🔗 لینک اختصاصی دانلود فایل (<b>{file_name}</b>): 📥\n{share_link}\n\n✨ هرکس روی این لینک کلیک کند، ربات مستقیماً فایل را به او تحویل می‌دهد! 🚀",
-            reply_markup=file_management_keyboard
-        )
-        await state.clear()
-    else:
-        await message.answer(
-            "⚠️ ابتدا یک فایل جدید ارسال کنید و برای آن نام انتخاب کنید. ❌",
-            reply_markup=file_management_keyboard
-        )
 
 
 @router.message(F.text == "📂 فایل‌های من")
@@ -534,14 +379,15 @@ async def list_user_files(message: Message, state: FSMContext) -> None:
 
     inline_keyboard = []
     for file_key, file_name in rows:
-        btn_view = InlineKeyboardButton(text=f"📄 {file_name}", callback_data=f"view_{file_key}")
-        btn_delete = InlineKeyboardButton(text="🗑️ حذف فایل", callback_data=f"del_{file_key}")
+        display_name = file_name if file_name else f"فایل {file_key}"
+        btn_view = InlineKeyboardButton(text=f"📂 {display_name}", callback_data=f"vfile_{file_key}")
+        btn_delete = InlineKeyboardButton(text="🗑️ حذف فایل", callback_data=f"dfile_{file_key}")
         inline_keyboard.append([btn_view, btn_delete])
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=inline_keyboard)
 
     await message.answer(
-        "📋 فایل‌های شما به شرح زیر است: 📂\n\nبرای مشاهده هر فایل روی نام آن و برای حذف روی دکمه‌ی مربوطه کلیک کنید: 👇",
+        "📋 لیست فایل‌های آپلود شده‌ی شما: 🗂️\n\nبرای دریافت لینک اختصاصی روی نام فایل و برای حذف روی دکمه‌ی مربوطه کلیک کنید: 👇",
         reply_markup=keyboard
     )
     await message.answer(
@@ -550,14 +396,16 @@ async def list_user_files(message: Message, state: FSMContext) -> None:
     )
 
 
-@router.callback_query(F.data.startswith("view_") | F.data.startswith("del_"))
+@router.callback_query(F.data.startswith("vfile_") | F.data.startswith("dfile_"))
 async def process_file_callback(callback_query: CallbackQuery):
     data = callback_query.data
-    action, file_key = data.split("_", 1)
+    parts = data.split("_", 1)
+    action = parts[0]
+    file_key = parts[1]
 
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT file_id, file_type, file_name, deleted FROM files WHERE file_key = %s", (file_key,))
+    cursor.execute("SELECT file_name, deleted FROM files WHERE file_key = %s", (file_key,))
     row = cursor.fetchone()
 
     if not row:
@@ -566,52 +414,134 @@ async def process_file_callback(callback_query: CallbackQuery):
         await callback_query.answer("⚠️ این فایل دیگر وجود ندارد. ❌", show_alert=True)
         return
 
-    file_id, file_type, file_name, deleted = row
+    file_name, deleted = row
 
-    if action == "view":
+    if action == "vfile":
         cursor.close()
         conn.close()
         if deleted == 1:
             await callback_query.answer("⚠️ این فایل حذف شده است. ❌", show_alert=True)
             return
         
-        await callback_query.message.answer(f"📦 فایل درخواستی شما (نام: {file_name}): 📥")
-        if file_type == "document":
-            await callback_query.message.answer_document(file_id)
-        elif file_type == "video":
-            await callback_query.message.answer_video(file_id)
-        elif file_type == "audio":
-            await callback_query.message.answer_audio(file_id)
-        elif file_type == "photo":
-            await callback_query.message.answer_photo(file_id)
-            
         bot_info = await callback_query.bot.get_me()
         share_link = f"https://t.me/{bot_info.username}?start=file_{file_key}"
-
+        
+        display_name = file_name if file_name else "فایل اختصاصی"
         await callback_query.message.answer(
-            f"🔗 **لینک اختصاصی دانلود فایل (<b>{file_name}</b>):** 📥\n{share_link}\n\n✨ هرکس روی این لینک کلیک کند، ربات مستقیماً فایل را به او تحویل می‌دهد! 🚀",
+            f"🔗 لینک اختصاصی برای فایل (<b>{display_name}</b>):\n\n`{share_link}`",
             parse_mode="HTML"
         )
+        await callback_query.answer("✅ لینک فایل ارسال شد. 🚀")
 
-        await callback_query.answer("✅ فایل و لینک اشتراک‌گذاری ارسال شدند. 🚀")
-
-    elif action == "del":
+    elif action == "dfile":
         cursor.execute("UPDATE files SET deleted = 1 WHERE file_key = %s", (file_key,))
         conn.commit()
         cursor.close()
         conn.close()
-
+        
         await callback_query.answer("🗑️ فایل با موفقیت حذف شد. ✅", show_alert=True)
         try:
-            await callback_query.message.edit_text("✅ این فایل از لیست شما حذف شد. 🗑️")
+            await callback_query.message.edit_text("🗑️ این فایل از لیست شما حذف شد.")
         except Exception:
             pass
 
 
+@router.message(F.document | F.video | F.audio | F.photo)
+async def handle_user_files(message: Message, state: FSMContext) -> None:
+    current_state = await state.get_state()
+    user_id = message.from_user.id
+
+    if current_state != UploadStates.waiting_for_file_name.state:
+        file_id = None
+        file_type = None
+
+        if message.document:
+            file_id = message.document.file_id
+            file_type = "document"
+        elif message.video:
+            file_id = message.video.file_id
+            file_type = "video"
+        elif message.audio:
+            file_id = message.audio.file_id
+            file_type = "audio"
+        elif message.photo:
+            file_id = message.photo[-1].file_id
+            file_type = "photo"
+
+        if file_id:
+            user_temp_file[user_id] = {
+                "file_id": file_id,
+                "file_type": file_type
+            }
+            await state.set_state(UploadStates.waiting_for_file_name)
+            await message.answer(
+                "✍️ فایل شما دریافت شد.\nحالا لطفاً یک **نام دلخواه** برای این فایل وارد کنید (تا در لیست فایل‌های شما ذخیره شود): 👇",
+                reply_markup=back_keyboard
+            )
+        return
+
+
+@router.message(UploadStates.waiting_for_file_name, F.text)
+async def process_file_name_step(message: Message, state: FSMContext) -> None:
+    user_id = message.from_user.id
+    text = message.text.strip()
+
+    if text == "🔙 بازگشت":
+        await state.clear()
+        user_temp_file.pop(user_id, None)
+        await message.answer("🔙 به بخش مدیریت فایل‌ها برگشتید: 👇", reply_markup=file_management_keyboard)
+        return
+
+    if user_id not in user_temp_file:
+        await state.clear()
+        await message.answer("⚠️ اطلاعات فایل منقضی شد. لطفاً دوباره فایل را ارسال کنید.", reply_markup=file_management_keyboard)
+        return
+
+    file_data = user_temp_file.pop(user_id)
+    file_id = file_data["file_id"]
+    file_type = file_data["file_type"]
+    file_name = text
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM files")
+    count = cursor.fetchone()[0]
+    file_key = f"f_{user_id}_{count + 1}"
+
+    cursor.execute("""
+        INSERT INTO files (file_key, user_id, file_id, file_type, file_name, deleted)
+        VALUES (%s, %s, %s, %s, %s, 0)
+    """, (file_key, user_id, file_id, file_type, file_name))
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+    bot_info = await message.bot.get_me()
+    share_link = f"https://t.me/{bot_info.username}?start=file_{file_key}"
+
+    await state.clear()
+    await message.answer(
+        f"🎉 فایل شما با نام **{file_name}** ثبت شد! ✅\n\n"
+        f"🔗 لینک اختصاصی برای اشتراک‌گذاری:\n`{share_link}`",
+        parse_mode="Markdown",
+        reply_markup=file_management_keyboard
+    )
+
+
+@router.message(F.text == "🔙 بازگشت به منوی اصلی")
+async def back_to_main(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    await message.answer(
+        "🏠 به منوی اصلی برگشتید: 👇",
+        reply_markup=main_menu_keyboard
+    )
+
+
 async def main() -> None:
-    bot = Bot(token=TOKEN, parse_mode="HTML")
+    bot = Bot(token=TOKEN)
     dp = Dispatcher()
     dp.include_router(router)
+    
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
