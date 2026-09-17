@@ -198,14 +198,17 @@ async def add_new_link_prompt(message: Message, state: FSMContext) -> None:
 
 
 async def shorten_url(long_url: str) -> str:
-    api_url = f"https://is.gd/create.php?format=simple&url={long_url}"
+    api_url = f"https://tinyurl.com/api-create.php?url={long_url}"
     async with aiohttp.ClientSession() as session:
-        async with session.get(api_url) as response:
-            if response.status == 200:
-                short_url = await response.text()
-                return short_url.strip()
-            else:
+        try:
+            async with session.get(api_url, timeout=10) as response:
+                if response.status == 200:
+                    short_url = await response.text()
+                    return short_url.strip()
                 return None
+        except Exception as e:
+            logging.error(f"Error shortening URL: {e}")
+            return None
 
 
 @router.message(UploadStates.waiting_for_new_link, F.text)
