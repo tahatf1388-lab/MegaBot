@@ -2,8 +2,7 @@ import asyncio
 import logging
 import sys
 import os
-import random
-import string
+import aiohttp
 import psycopg2
 from urllib.parse import urlparse
 
@@ -39,9 +38,6 @@ def get_db_connection():
 def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
-    
-    # پاک کردن جدول لینک‌ها برای جلوگیری از تداخل ساختار قبلی
-    cursor.execute("DROP TABLE IF EXISTS links CASCADE;")
     
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS files (
@@ -111,37 +107,27 @@ back_keyboard = ReplyKeyboardMarkup(
 )
 
 
+async def shorten_url(long_url: str) -> str:
+    """استفاده از سرویس رایگان و پرسرعت is.gd برای کوتاه کردن واقعی لینک‌ها"""
+    api_url = f"https://is.gd/create.php?format=simple&url={long_url}"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(api_url, timeout=10) as response:
+                if response.status == 200:
+                    short = await response.text()
+                    if short.startswith("http"):
+                        return short.strip()
+    except Exception as e:
+        logging.error(f"Error shortening URL: {e}")
+    return None
+
+
 @router.message(CommandStart())
 async def command_start_handler(message: Message, state: FSMContext) -> None:
     await state.clear()
     args = message.text.split(maxsplit=1)
     
-    if len(args) > 1 and args[1].startswith("s="):
-        random_code = args[1].replace("s=", "")
-        
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT link_name, long_url FROM links WHERE short_url LIKE %s AND deleted = 0", (f"%?s={random_code}",))
-        row = cursor.fetchone()
-        cursor.close()
-        conn.close()
-
-        if row:
-            link_name, long_url = row
-            await message.answer(
-                f"🎁 لینک اصلیِ شما (نام: <b>{link_name}</b>):\n\n{long_url}",
-                parse_mode="HTML"
-            )
-        else:
-            await message.answer("⚠️ متأسفانه لینک مورد نظر پیدا نشد یا منقضی شده است. ❌")
-            
-        await message.answer(
-            "🏠 به منوی اصلی برگشتید: 👇",
-            reply_markup=main_menu_keyboard
-        )
-        return
-
-    elif len(args) > 1 and args[1].startswith("file_"):
+    if len(args) > 1 and args[1].startswith("file_"):
         file_key = args[1].replace("file_", "")
         
         conn = get_db_connection()
@@ -242,9 +228,15 @@ async def process_link_name(message: Message, state: FSMContext) -> None:
 
     long_url = user_temp_link.pop(user_id)["long_url"]
 
-    random_code = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
-    bot_info = await message.bot.get_me()
-    short_result = f"https://t.me/{bot_info.username}?s={random_code}"
+    waiting_msg = await message.answer("⏳ در حال کوتاه‌سازی لینک... 🔄")
+
+    # کوتاه کردن واقعی لینک از طریق سرویس خارجی
+    short_result = await shorten_url(long_url)
+
+    if not short_result:
+        await waiting_msg.edit_text("❌ خطا در کوتاه‌سازی لینک. لطفاً از معتبر بودن لینک مطمئن شده و دوباره تلاش کنید.", reply_markup=link_services_keyboard)
+        await state.clear()
+        return
 
     try:
         conn = get_db_connection()
@@ -262,16 +254,19 @@ async def process_link_name(message: Message, state: FSMContext) -> None:
         conn.close()
     except Exception as e:
         logging.error(f"Database error in link creation: {e}")
-        await message.answer("⚠️ خطا در ذخیره اطلاعات در دیتابیس. لطفاً دوباره تلاش کنید.", reply_markup=link_services_keyboard)
+        await waiting_msg.edit_text("⚠️ خطا در ذخیره اطلاعات در دیتابیس. لطفاً دوباره تلاش کنید.", reply_markup=link_services_keyboard)
         await state.clear()
         return
 
     await state.clear()
-    await message.answer(
+    await waiting_msg.edit_text(
         f"🎉 لینک شما با موفقیت کوتاه و ذخیره شد! ✅\n\n"
         f"📌 نام لینک: <b>{link_name}</b>\n"
         f"🔗 لینک کوتاه شده:\n`{short_result}`",
-        parse_mode="HTML",
+        parse_mode="HTML"
+    )
+    await message.answer(
+        "🔙 بازگشت به بخش خدمات لینک: 👇",
         reply_markup=link_services_keyboard
     )
 
@@ -423,7 +418,7 @@ async def process_file_callback(callback_query: CallbackQuery):
         
         display_name = file_name if file_name else "فایل اختصاصی"
         await callback_query.message.answer(
-            f"🔗 لینک اختصاصی برای فایل (<b>{display_name}</b>):\n\n`{share_link}`",
+            f"🔗 لینک کوتاه شده اختصاصی برای فایل (<b>{display_name}</b>):\n\n`{share_link}`",
             parse_mode="HTML"
         )
         await callback_query.answer("✅ لینک فایل ارسال شد. 🚀")
