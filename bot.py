@@ -52,7 +52,7 @@ def init_db():
         )
     """)
     
-    # جدول لینک‌های کاربران (اضافه شدن ستون link_name و link_id اختصاصی)
+    # جدول لینک‌های کاربران
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS links (
             id SERIAL PRIMARY KEY,
@@ -183,7 +183,7 @@ async def upload_menu(message: Message, state: FSMContext) -> None:
     )
 
 
-# --- بخش خدمات لینک (بازطراحی شده مطابق درخواست) ---
+# --- بخش خدمات لینک ---
 
 @router.message(F.text == "🔗 خدمات لینک")
 async def link_services_menu(message: Message, state: FSMContext) -> None:
@@ -205,9 +205,12 @@ async def add_new_link_prompt(message: Message, state: FSMContext) -> None:
 
 async def shorten_url(long_url: str) -> str:
     api_url = f"https://tinyurl.com/api-create.php?url={long_url}"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
     async with aiohttp.ClientSession() as session:
         try:
-            async with session.get(api_url, timeout=10) as response:
+            async with session.get(api_url, headers=headers, timeout=7) as response:
                 if response.status == 200:
                     short_url = await response.text()
                     return short_url.strip()
@@ -329,8 +332,6 @@ async def list_user_links(message: Message, state: FSMContext) -> None:
 @router.callback_query(F.data.startswith("vlink_") | F.data.startswith("dlink_"))
 async def process_link_callback(callback_query: CallbackQuery):
     data = callback_query.data
-    action, link_id = data.split("_", 1)
-    # اصلاح برای هندل کردن پترن‌های دارای چند زیربخش
     parts = data.split("_")
     action = parts[0] # vlink یا dlink
     link_key_id = "_".join(parts[1:])
@@ -355,7 +356,6 @@ async def process_link_callback(callback_query: CallbackQuery):
             await callback_query.answer("⚠️ این لینک حذف شده است. ❌", show_alert=True)
             return
         
-        # ارسال اطلاعات کامل لینک (هم اصلی و هم کوتاه)
         await callback_query.message.answer(
             f"📊 **اطلاعات لینک (<b>{link_name}</b>):**\n\n"
             f"🌐 لینک اصلی (طولانی):\n`{long_url}`\n\n"
