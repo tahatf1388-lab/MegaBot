@@ -40,6 +40,9 @@ def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
     
+    # پاک کردن جدول لینک‌ها برای جلوگیری از تداخل ساختار قبلی
+    cursor.execute("DROP TABLE IF EXISTS links CASCADE;")
+    
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS files (
             file_key TEXT PRIMARY KEY,
