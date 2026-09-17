@@ -1,7 +1,9 @@
 import asyncio
 import logging
 import sys
-import sqlite3
+import os
+import psycopg2
+from urllib.parse import urlparse
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import CommandStart
@@ -17,19 +19,31 @@ from aiogram.types import (
 import aiohttp
 
 TOKEN = "8844658209:AAH41cGWIdMiSLQq8PO5VNU_qds7vWJpmmE"
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 router = Router()
 
-# --- راه‌اندازی و اتصال به پایگاه داده SQLite ---
+# --- راه‌اندازی و اتصال به پایگاه داده PostgreSQL ---
+def get_db_connection():
+    parsed_url = urlparse(DATABASE_URL)
+    conn = psycopg2.connect(
+        database=parsed_url.path[1:],
+        user=parsed_url.username,
+        password=parsed_url.password,
+        host=parsed_url.hostname,
+        port=parsed_url.port
+    )
+    return conn
+
 def init_db():
-    conn = sqlite3.connect("bot_database.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     # جدول فایل‌ها
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS files (
             file_key TEXT PRIMARY KEY,
-            user_id INTEGER,
+            user_id BIGINT,
             file_id TEXT,
             file_type TEXT,
             file_name TEXT,
@@ -40,13 +54,14 @@ def init_db():
     # جدول لینک‌های کاربران
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS links (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT,
             long_url TEXT,
             short_url TEXT
         )
     """)
     conn.commit()
+    cursor.close()
     conn.close()
 
 init_db()
@@ -60,8 +75,6 @@ class UploadStates(StatesGroup):
 user_temp_file = {}
 
 # --- کیبوردها ---
-
-# منوی اصلی (مدیریت فایل‌ها سمت چپ، خدمات لینک سمت راست)
 main_menu_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="🗂️ مدیریت فایل‌ها"), KeyboardButton(text="🔗 خدمات لینک")],
@@ -71,7 +84,6 @@ main_menu_keyboard = ReplyKeyboardMarkup(
     input_field_placeholder="لطفاً یکی از گزینه‌های زیر را انتخاب کنید... 👇"
 )
 
-# منوی بخش خدمات لینک (لینک‌های من سمت چپ، افزودن لینک جدید سمت راست)
 link_services_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="➕ افزودن لینک جدید"), KeyboardButton(text="📋 لینک‌های من")],
@@ -80,7 +92,6 @@ link_services_keyboard = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
-# منوی مدیریت فایل‌ها (زیرشاخه منوی اصلی)
 file_management_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="📁 آپلود فایل و دریافت لینک"), KeyboardButton(text="📂 فایل‌های من")],
@@ -89,7 +100,6 @@ file_management_keyboard = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
-# منوی زمان آپلود یا افزودن لینک (فقط دکمه بازگشت)
 back_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="🔙 بازگشت")]
@@ -97,7 +107,6 @@ back_keyboard = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
-# منوی پس از دریافت فایل و نام‌گذاری
 file_received_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="📥 دریافت لینک دانلود")],
@@ -114,10 +123,11 @@ async def command_start_handler(message: Message, state: FSMContext) -> None:
     if len(args) > 1 and args[1].startswith("file_"):
         file_key = args[1].replace("file_", "")
         
-        conn = sqlite3.connect("bot_database.db")
+        conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT file_id, file_type, deleted FROM files WHERE file_key = ?", (file_key,))
+        cursor.execute("SELECT file_id, file_type, deleted FROM files WHERE file_key = %s", (file_key,))
         row = cursor.fetchone()
+        cursor.close()
         conn.close()
 
         if row:
@@ -220,11 +230,12 @@ async def process_new_link(message: Message, state: FSMContext) -> None:
     if short_result and short_result.startswith("http"):
         user_id = message.from_user.id
         
-        # ذخیره در پایگاه داده SQLite
-        conn = sqlite3.connect("bot_database.db")
+        # ذخیره در پایگاه داده PostgreSQL
+        conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("INSERT INTO links (user_id, long_url, short_url) VALUES (?, ?, ?)", (user_id, user_link, short_result))
+        cursor.execute("INSERT INTO links (user_id, long_url, short_url) VALUES (%s, %s, %s)", (user_id, user_link, short_result))
         conn.commit()
+        cursor.close()
         conn.close()
 
         await state.clear()
@@ -245,10 +256,11 @@ async def list_user_links(message: Message, state: FSMContext) -> None:
     await state.clear()
     user_id = message.from_user.id
 
-    conn = sqlite3.connect("bot_database.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT long_url, short_url FROM links WHERE user_id = ?", (user_id,))
+    cursor.execute("SELECT long_url, short_url FROM links WHERE user_id = %s", (user_id,))
     rows = cursor.fetchall()
+    cursor.close()
     conn.close()
 
     if not rows:
@@ -297,7 +309,6 @@ async def back_to_main(message: Message, state: FSMContext) -> None:
     )
 
 
-# دریافت فایل از کاربر
 @router.message(F.document | F.video | F.audio | F.photo)
 async def handle_files(message: Message, state: FSMContext) -> None:
     user_id = message.from_user.id
@@ -349,8 +360,7 @@ async def save_file_name(message: Message, state: FSMContext) -> None:
 
     file_info = user_temp_file.pop(user_id)
     
-    # تولید کلیدتازه بر اساس شمارش کل فایل‌های دیتابیس
-    conn = sqlite3.connect("bot_database.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT COUNT(*) FROM files")
     count = cursor.fetchone()[0]
@@ -358,9 +368,10 @@ async def save_file_name(message: Message, state: FSMContext) -> None:
 
     cursor.execute("""
         INSERT INTO files (file_key, user_id, file_id, file_type, file_name, deleted)
-        VALUES (?, ?, ?, ?, ?, 0)
+        VALUES (%s, %s, %s, %s, %s, 0)
     """, (file_key, user_id, file_info["file_id"], file_info["type"], file_name))
     conn.commit()
+    cursor.close()
     conn.close()
 
     await state.update_data(current_file_key=file_key)
@@ -382,10 +393,11 @@ async def get_download_link(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     file_key = data.get("current_file_key")
 
-    conn = sqlite3.connect("bot_database.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT file_name, deleted FROM files WHERE file_key = ?", (file_key,))
+    cursor.execute("SELECT file_name, deleted FROM files WHERE file_key = %s", (file_key,))
     row = cursor.fetchone()
+    cursor.close()
     conn.close()
 
     if file_key and row and row[1] == 0:
@@ -410,10 +422,11 @@ async def list_user_files(message: Message, state: FSMContext) -> None:
     await state.clear()
     user_id = message.from_user.id
 
-    conn = sqlite3.connect("bot_database.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT file_key, file_name FROM files WHERE user_id = ? AND deleted = 0", (user_id,))
+    cursor.execute("SELECT file_key, file_name FROM files WHERE user_id = %s AND deleted = 0", (user_id,))
     rows = cursor.fetchall()
+    cursor.close()
     conn.close()
 
     if not rows:
@@ -446,12 +459,13 @@ async def process_file_callback(callback_query):
     data = callback_query.data
     action, file_key = data.split("_", 1)
 
-    conn = sqlite3.connect("bot_database.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT file_id, file_type, file_name, deleted FROM files WHERE file_key = ?", (file_key,))
+    cursor.execute("SELECT file_id, file_type, file_name, deleted FROM files WHERE file_key = %s", (file_key,))
     row = cursor.fetchone()
 
     if not row:
+        cursor.close()
         conn.close()
         await callback_query.answer("⚠️ این فایل دیگر وجود ندارد. ❌", show_alert=True)
         return
@@ -459,6 +473,7 @@ async def process_file_callback(callback_query):
     file_id, file_type, file_name, deleted = row
 
     if action == "view":
+        cursor.close()
         conn.close()
         if deleted == 1:
             await callback_query.answer("⚠️ این فایل حذف شده است. ❌", show_alert=True)
@@ -477,8 +492,9 @@ async def process_file_callback(callback_query):
         await callback_query.answer("✅ فایل ارسال شد. 🚀")
 
     elif action == "del":
-        cursor.execute("UPDATE files SET deleted = 1 WHERE file_key = ?", (file_key,))
+        cursor.execute("UPDATE files SET deleted = 1 WHERE file_key = %s", (file_key,))
         conn.commit()
+        cursor.close()
         conn.close()
 
         await callback_query.answer("🗑️ فایل با موفقیت حذف شد. ✅", show_alert=True)
