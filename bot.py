@@ -230,7 +230,6 @@ async def process_new_link(message: Message, state: FSMContext) -> None:
     if short_result and short_result.startswith("http"):
         user_id = message.from_user.id
         
-        # ذخیره در پایگاه داده PostgreSQL
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("INSERT INTO links (user_id, long_url, short_url) VALUES (%s, %s, %s)", (user_id, user_link, short_result))
@@ -479,6 +478,7 @@ async def process_file_callback(callback_query):
             await callback_query.answer("⚠️ این فایل حذف شده است. ❌", show_alert=True)
             return
         
+        # ۱. ارسال خود فایل
         await callback_query.message.answer(f"📦 فایل درخواستی شما (نام: {file_name}): 📥")
         if file_type == "document":
             await callback_query.message.answer_document(file_id)
@@ -489,7 +489,23 @@ async def process_file_callback(callback_query):
         elif file_type == "photo":
             await callback_query.message.answer_photo(file_id)
             
-        await callback_query.answer("✅ فایل ارسال شد. 🚀")
+        # ۲. دریافت مسیر و ساخت لینک مستقیم دانلود از سرور تلگرام
+        try:
+            file_info = await callback_query.bot.get_file(file_id)
+            file_path = file_info.file_path
+            bot_token = callback_query.bot.token
+            download_url = f"https://api.telegram.org/file/bot{bot_token}/{file_path}"
+            
+            # ۳. ارسال پیام جداگانه حاوی لینک دانلود مستقیم
+            await callback_query.message.answer(
+                f"🔗 **لینک دانلود مستقیم فایل ({file_name}):**\n\n`{download_url}`",
+                parse_mode="Markdown",
+                disable_web_page_preview=True
+            )
+        except Exception as e:
+            logging.error(f"Error getting file path: {e}")
+
+        await callback_query.answer("✅ فایل و لینک دانلود ارسال شدند. 🚀")
 
     elif action == "del":
         cursor.execute("UPDATE files SET deleted = 1 WHERE file_key = %s", (file_key,))
