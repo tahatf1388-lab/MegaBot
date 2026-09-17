@@ -489,23 +489,17 @@ async def process_file_callback(callback_query):
         elif file_type == "photo":
             await callback_query.message.answer_photo(file_id)
             
-        # ۲. دریافت مسیر و ساخت لینک مستقیم دانلود از سرور تلگرام
-        try:
-            file_info = await callback_query.bot.get_file(file_id)
-            file_path = file_info.file_path
-            bot_token = callback_query.bot.token
-            download_url = f"https://api.telegram.org/file/bot{bot_token}/{file_path}"
-            
-            # ۳. ارسال پیام جداگانه حاوی لینک دانلود مستقیم
-            await callback_query.message.answer(
-                f"🔗 **لینک دانلود مستقیم فایل ({file_name}):**\n\n`{download_url}`",
-                parse_mode="Markdown",
-                disable_web_page_preview=True
-            )
-        except Exception as e:
-            logging.error(f"Error getting file path: {e}")
+        # ۲. ساخت لینک اختصاصی دانلود ربات برای این فایل
+        bot_info = await callback_query.bot.get_me()
+        share_link = f"https://t.me/{bot_info.username}?start=file_{file_key}"
 
-        await callback_query.answer("✅ فایل و لینک دانلود ارسال شدند. 🚀")
+        # ۳. ارسال پیام دوم حاوی لینک اشتراک‌گذاری ربات
+        await callback_query.message.answer(
+            f"🔗 **لینک اختصاصی دانلود فایل (<b>{file_name}</b>):** 📥\n{share_link}\n\n✨ هرکس روی این لینک کلیک کند، ربات مستقیماً فایل را به او تحویل می‌دهد! 🚀",
+            parse_mode="HTML"
+        )
+
+        await callback_query.answer("✅ فایل و لینک اشتراک‌گذاری ارسال شدند. 🚀")
 
     elif action == "del":
         cursor.execute("UPDATE files SET deleted = 1 WHERE file_key = %s", (file_key,))
