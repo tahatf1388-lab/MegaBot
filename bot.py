@@ -14,7 +14,8 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
     KeyboardButton,
     InlineKeyboardMarkup,
-    InlineKeyboardButton
+    InlineKeyboardButton,
+    CallbackQuery
 )
 import aiohttp
 
@@ -51,13 +52,16 @@ def init_db():
         )
     """)
     
-    # جدول لینک‌های کاربران
+    # جدول لینک‌های کاربران (اضافه شدن ستون link_name و link_id اختصاصی)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS links (
             id SERIAL PRIMARY KEY,
+            link_id TEXT UNIQUE,
             user_id BIGINT,
+            link_name TEXT,
             long_url TEXT,
-            short_url TEXT
+            short_url TEXT,
+            deleted INTEGER DEFAULT 0
         )
     """)
     conn.commit()
@@ -69,10 +73,12 @@ init_db()
 # وضعیت‌های ربات برای ثبت نام فایل و لینک
 class UploadStates(StatesGroup):
     waiting_for_file_name = State()
-    waiting_for_new_link = State()
+    waiting_for_link_url = State()
+    waiting_for_link_name = State()
 
-# دیتابیس موقت برای نگهداری فایل در حال آپلود هر کاربر پیش از نام‌گذاری
+# دیتابیس موقت برای نگهداری موقت اطلاعات قبل از ذخیره نهایی
 user_temp_file = {}
+user_temp_link = {}
 
 # --- کیبوردها (ریپلای پایین صفحه) ---
 main_menu_keyboard = ReplyKeyboardMarkup(
@@ -177,7 +183,7 @@ async def upload_menu(message: Message, state: FSMContext) -> None:
     )
 
 
-# --- بخش خدمات لینک ---
+# --- بخش خدمات لینک (بازطراحی شده مطابق درخواست) ---
 
 @router.message(F.text == "🔗 خدمات لینک")
 async def link_services_menu(message: Message, state: FSMContext) -> None:
@@ -190,9 +196,9 @@ async def link_services_menu(message: Message, state: FSMContext) -> None:
 
 @router.message(F.text == "➕ افزودن لینک جدید")
 async def add_new_link_prompt(message: Message, state: FSMContext) -> None:
-    await state.set_state(UploadStates.waiting_for_new_link)
+    await state.set_state(UploadStates.waiting_for_link_url)
     await message.answer(
-        "🔗 لطفاً لینک طولانی خود را ارسال کنید تا آن را کوتاه کنم و در لیست شما ذخیره کنم: 📝✨",
+        "🔗 لطفاً لینک طولانی خود را ارسال کنید تا آن را کوتاه کنم: 📝✨",
         reply_markup=back_keyboard
     )
 
@@ -211,39 +217,69 @@ async def shorten_url(long_url: str) -> str:
             return None
 
 
-@router.message(UploadStates.waiting_for_new_link, F.text)
-async def process_new_link(message: Message, state: FSMContext) -> None:
+@router.message(UploadStates.waiting_for_link_url, F.text)
+async def process_link_url(message: Message, state: FSMContext) -> None:
     user_link = message.text.strip()
+    user_id = message.from_user.id
     
     if user_link == "🔙 بازگشت":
         await state.clear()
-        await message.answer(
-            "🔙 به بخش خدمات لینک برگشتید: 👇",
-            reply_markup=link_services_keyboard
-        )
+        await message.answer("🔙 به بخش خدمات لینک برگشتید: 👇", reply_markup=link_services_keyboard)
         return
 
     if not (user_link.startswith("http://") or user_link.startswith("https://") or user_link.startswith("www.")):
         await message.answer("⚠️ لطفاً یک لینک معتبر (شروع شده با http یا https) ارسال کنید: ❌")
         return
 
+    user_temp_link[user_id] = {"long_url": user_link}
+    await state.set_state(UploadStates.waiting_for_link_name)
+    await message.answer(
+        "✍️ لینک دریافت شد. حالا لطفاً یک **نام دلخواه** برای این لینک ارسال کنید (تا در لیست لینک‌های شما نمایش داده شود): 👇",
+        reply_markup=back_keyboard
+    )
+
+
+@router.message(UploadStates.waiting_for_link_name, F.text)
+async def process_link_name(message: Message, state: FSMContext) -> None:
+    user_id = message.from_user.id
+    link_name = message.text.strip()
+
+    if link_name == "🔙 بازگشت":
+        await state.clear()
+        await message.answer("🔙 به بخش خدمات لینک برگشتید: 👇", reply_markup=link_services_keyboard)
+        return
+
+    if user_id not in user_temp_link:
+        await state.clear()
+        await message.answer("⚠️ خطایی رخ داد. لطفاً دوباره تلاش کنید.", reply_markup=link_services_keyboard)
+        return
+
+    long_url = user_temp_link.pop(user_id)["long_url"]
+
     waiting_msg = await message.answer("⏳ در حال کوتاه کردن لینک... 🔄")
-    short_result = await shorten_url(user_link)
+    short_result = await shorten_url(long_url)
 
     if short_result and short_result.startswith("http"):
-        user_id = message.from_user.id
-        
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("INSERT INTO links (user_id, long_url, short_url) VALUES (%s, %s, %s)", (user_id, user_link, short_result))
+        cursor.execute("SELECT COUNT(*) FROM links")
+        count = cursor.fetchone()[0]
+        link_id = f"link_{user_id}_{count + 1}"
+
+        cursor.execute("""
+            INSERT INTO links (link_id, user_id, link_name, long_url, short_url, deleted)
+            VALUES (%s, %s, %s, %s, %s, 0)
+        """, (link_id, user_id, link_name, long_url, short_result))
         conn.commit()
         cursor.close()
         conn.close()
 
         await state.clear()
         await waiting_msg.edit_text(
-            f"🎉 لینک شما با موفقیت کوتاه و ذخیره شد! ✅\n\n🔗 لینک کوتاه شده:\n`{short_result}`\n\n✨ می‌توانید از این لینک در پیامک یا هر جای دیگری استفاده کنید.",
-            parse_mode="Markdown"
+            f"🎉 لینک شما با موفقیت کوتاه و ذخیره شد! ✅\n\n"
+            f"📌 نام لینک: <b>{link_name}</b>\n"
+            f"🔗 لینک کوتاه شده:\n`{short_result}`",
+            parse_mode="HTML"
         )
         await message.answer(
             "🔙 بازگشت به بخش خدمات لینک: 👇",
@@ -260,7 +296,7 @@ async def list_user_links(message: Message, state: FSMContext) -> None:
 
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT long_url, short_url FROM links WHERE user_id = %s", (user_id,))
+    cursor.execute("SELECT link_id, link_name FROM links WHERE user_id = %s AND deleted = 0", (user_id,))
     rows = cursor.fetchall()
     cursor.close()
     conn.close()
@@ -272,15 +308,73 @@ async def list_user_links(message: Message, state: FSMContext) -> None:
         )
         return
 
-    links_text = "📋 لیست لینک‌های کوتاه شده‌ی شما: 👇\n\n"
-    for idx, item in enumerate(rows, 1):
-        links_text += f"{idx}. اصلی: {item[0]}\n   کوتاه: `{item[1]}`\n\n"
+    inline_keyboard = []
+    for link_id, link_name in rows:
+        btn_view = InlineKeyboardButton(text=f"🌐 {link_name}", callback_data=f"vlink_{link_id}")
+        btn_delete = InlineKeyboardButton(text="🗑️ حذف لینک", callback_data=f"dlink_{link_id}")
+        inline_keyboard.append([btn_view, btn_delete])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=inline_keyboard)
 
     await message.answer(
-        links_text,
-        parse_mode="Markdown",
+        "📋 لیست لینک‌های کوتاه شده‌ی شما: 🔗\n\nبرای مشاهده جزئیات روی نام لینک و برای حذف روی دکمه‌ی مربوطه کلیک کنید: 👇",
+        reply_markup=keyboard
+    )
+    await message.answer(
+        "🔙 برای بازگشت از منوی زیر استفاده کنید: 👇",
         reply_markup=link_services_keyboard
     )
+
+
+@router.callback_query(F.data.startswith("vlink_") | F.data.startswith("dlink_"))
+async def process_link_callback(callback_query: CallbackQuery):
+    data = callback_query.data
+    action, link_id = data.split("_", 1)
+    # اصلاح برای هندل کردن پترن‌های دارای چند زیربخش
+    parts = data.split("_")
+    action = parts[0] # vlink یا dlink
+    link_key_id = "_".join(parts[1:])
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT link_name, long_url, short_url, deleted FROM links WHERE link_id = %s", (link_key_id,))
+    row = cursor.fetchone()
+
+    if not row:
+        cursor.close()
+        conn.close()
+        await callback_query.answer("⚠️ این لینک دیگر وجود ندارد. ❌", show_alert=True)
+        return
+
+    link_name, long_url, short_url, deleted = row
+
+    if action == "vlink":
+        cursor.close()
+        conn.close()
+        if deleted == 1:
+            await callback_query.answer("⚠️ این لینک حذف شده است. ❌", show_alert=True)
+            return
+        
+        # ارسال اطلاعات کامل لینک (هم اصلی و هم کوتاه)
+        await callback_query.message.answer(
+            f"📊 **اطلاعات لینک (<b>{link_name}</b>):**\n\n"
+            f"🌐 لینک اصلی (طولانی):\n`{long_url}`\n\n"
+            f"🔗 لینک کوتاه شده:\n`{short_url}`",
+            parse_mode="Markdown"
+        )
+        await callback_query.answer("✅ اطلاعات لینک ارسال شد. 🚀")
+
+    elif action == "dlink":
+        cursor.execute("UPDATE links SET deleted = 1 WHERE link_id = %s", (link_key_id,))
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        await callback_query.answer("🗑️ لینک با موفقیت حذف شد. ✅", show_alert=True)
+        try:
+            await callback_query.message.edit_text("✅ این لینک از لیست شما حذف شد. 🗑️")
+        except Exception:
+            pass
 
 
 @router.message(F.text == "👤 حساب کاربری")
@@ -297,8 +391,8 @@ async def user_account_handler(message: Message, state: FSMContext) -> None:
 async def back_action(message: Message, state: FSMContext) -> None:
     await state.clear()
     await message.answer(
-        "🔙 به بخش مدیریت فایل‌ها برگشتید: 👇",
-        reply_markup=file_management_keyboard
+        "🔙 به منوی قبلی برگشتید: 👇",
+        reply_markup=main_menu_keyboard
     )
 
 
@@ -457,7 +551,7 @@ async def list_user_files(message: Message, state: FSMContext) -> None:
 
 
 @router.callback_query(F.data.startswith("view_") | F.data.startswith("del_"))
-async def process_file_callback(callback_query):
+async def process_file_callback(callback_query: CallbackQuery):
     data = callback_query.data
     action, file_key = data.split("_", 1)
 
@@ -481,7 +575,6 @@ async def process_file_callback(callback_query):
             await callback_query.answer("⚠️ این فایل حذف شده است. ❌", show_alert=True)
             return
         
-        # ۱. ارسال خود فایل
         await callback_query.message.answer(f"📦 فایل درخواستی شما (نام: {file_name}): 📥")
         if file_type == "document":
             await callback_query.message.answer_document(file_id)
@@ -492,11 +585,9 @@ async def process_file_callback(callback_query):
         elif file_type == "photo":
             await callback_query.message.answer_photo(file_id)
             
-        # ۲. ساخت لینک اختصاصی دانلود ربات برای این فایل
         bot_info = await callback_query.bot.get_me()
         share_link = f"https://t.me/{bot_info.username}?start=file_{file_key}"
 
-        # ۳. ارسال پیام دوم حاوی لینک اشتراک‌گذاری ربات
         await callback_query.message.answer(
             f"🔗 **لینک اختصاصی دانلود فایل (<b>{file_name}</b>):** 📥\n{share_link}\n\n✨ هرکس روی این لینک کلیک کند، ربات مستقیماً فایل را به او تحویل می‌دهد! 🚀",
             parse_mode="HTML"
