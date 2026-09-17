@@ -73,7 +73,6 @@ class UploadStates(StatesGroup):
     waiting_for_link_url = State()
     waiting_for_link_name = State()
 
-user_temp_file = {}
 user_temp_link = {}
 
 main_menu_keyboard = ReplyKeyboardMarkup(
@@ -127,7 +126,8 @@ async def command_start_handler(message: Message, state: FSMContext) -> None:
         if row:
             link_name, long_url = row
             await message.answer(
-                f"🎁 لینک اصلیِ شما (نام: <b>{link_name}</b>):\n\n{long_url}"
+                f"🎁 لینک اصلیِ شما (نام: <b>{link_name}</b>):\n\n{long_url}",
+                parse_mode="HTML"
             )
         else:
             await message.answer("⚠️ متأسفانه لینک مورد نظر پیدا نشد یا منقضی شده است. ❌")
@@ -186,15 +186,6 @@ async def management_menu(message: Message, state: FSMContext) -> None:
     )
 
 
-@router.message(F.text == "📁 آپلود فایل و دریافت لینک")
-async def upload_menu(message: Message, state: FSMContext) -> None:
-    await state.clear()
-    await message.answer(
-        "📂 لطفاً فایل خود را با هر فرمت دلخواهی که دارید ارسال کنید! 📎✨",
-        reply_markup=back_keyboard
-    )
-
-
 @router.message(F.text == "🔗 خدمات لینک")
 async def link_services_menu(message: Message, state: FSMContext) -> None:
     await state.clear()
@@ -223,10 +214,6 @@ async def process_link_url(message: Message, state: FSMContext) -> None:
         await message.answer("🔙 به بخش خدمات لینک برگشتید: 👇", reply_markup=link_services_keyboard)
         return
 
-    if not (user_link.startswith("http://") or user_link.startswith("https://") or user_link.startswith("www.")):
-        await message.answer("⚠️ لطفاً یک لینک معتبر (شروع شده با http یا https) ارسال کنید: ❌")
-        return
-
     user_temp_link[user_id] = {"long_url": user_link}
     await state.set_state(UploadStates.waiting_for_link_name)
     await message.answer(
@@ -252,35 +239,36 @@ async def process_link_name(message: Message, state: FSMContext) -> None:
 
     long_url = user_temp_link.pop(user_id)["long_url"]
 
-    waiting_msg = await message.answer("⏳ در حال تولید لینک کوتاه... 🔄")
-    
     random_code = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
     bot_info = await message.bot.get_me()
     short_result = f"https://t.me/{bot_info.username}?s={random_code}"
 
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM links")
-    count = cursor.fetchone()[0]
-    link_id = f"link_{user_id}_{count + 1}"
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM links")
+        count = cursor.fetchone()[0]
+        link_id = f"link_{user_id}_{count + 1}"
 
-    cursor.execute("""
-        INSERT INTO links (link_id, user_id, link_name, long_url, short_url, deleted)
-        VALUES (%s, %s, %s, %s, %s, 0)
-    """, (link_id, user_id, link_name, long_url, short_result))
-    conn.commit()
-    cursor.close()
-    conn.close()
+        cursor.execute("""
+            INSERT INTO links (link_id, user_id, link_name, long_url, short_url, deleted)
+            VALUES (%s, %s, %s, %s, %s, 0)
+        """, (link_id, user_id, link_name, long_url, short_result))
+        conn.commit()
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        logging.error(f"Database error in link creation: {e}")
+        await message.answer("⚠️ خطا در ذخیره اطلاعات در دیتابیس. لطفاً دوباره تلاش کنید.", reply_markup=link_services_keyboard)
+        await state.clear()
+        return
 
     await state.clear()
-    await waiting_msg.edit_text(
+    await message.answer(
         f"🎉 لینک شما با موفقیت کوتاه و ذخیره شد! ✅\n\n"
         f"📌 نام لینک: <b>{link_name}</b>\n"
         f"🔗 لینک کوتاه شده:\n`{short_result}`",
-        parse_mode="HTML"
-    )
-    await message.answer(
-        "🔙 بازگشت به بخش خدمات لینک: 👇",
+        parse_mode="HTML",
         reply_markup=link_services_keyboard
     )
 
@@ -315,10 +303,6 @@ async def list_user_links(message: Message, state: FSMContext) -> None:
     await message.answer(
         "📋 لیست لینک‌های کوتاه شده‌ی شما: 🔗\n\nبرای مشاهده جزئیات روی نام لینک و برای حذف روی دکمه‌ی مربوطه کلیک کنید: 👇",
         reply_markup=keyboard
-    )
-    await message.answer(
-        "🔙 برای بازگشت از منوی زیر استفاده کنید: 👇",
-        reply_markup=link_services_keyboard
     )
 
 
@@ -402,10 +386,6 @@ async def list_user_files(message: Message, state: FSMContext) -> None:
         "📋 لیست فایل‌های آپلود شده‌ی شما: 🗂️\n\nبرای دریافت لینک اختصاصی روی نام فایل و برای حذف روی دکمه‌ی مربوطه کلیک کنید: 👇",
         reply_markup=keyboard
     )
-    await message.answer(
-        "🔙 برای بازگشت از منوی زیر استفاده کنید: 👇",
-        reply_markup=file_management_keyboard
-    )
 
 
 @router.callback_query(F.data.startswith("vfile_") | F.data.startswith("dfile_"))
@@ -481,7 +461,7 @@ async def handle_user_files(message: Message, state: FSMContext) -> None:
             file_type = "photo"
 
         if file_id:
-            user_temp_file[user_id] = {
+            user_temp_link[f"file_{user_id}"] = {
                 "file_id": file_id,
                 "file_type": file_type
             }
@@ -500,16 +480,17 @@ async def process_file_name_step(message: Message, state: FSMContext) -> None:
 
     if text == "🔙 بازگشت":
         await state.clear()
-        user_temp_file.pop(user_id, None)
+        user_temp_link.pop(f"file_{user_id}", None)
         await message.answer("🔙 به بخش مدیریت فایل‌ها برگشتید: 👇", reply_markup=file_management_keyboard)
         return
 
-    if user_id not in user_temp_file:
+    file_key_dict_key = f"file_{user_id}"
+    if file_key_dict_key not in user_temp_link:
         await state.clear()
         await message.answer("⚠️ اطلاعات فایل منقضی شد. لطفاً دوباره فایل را ارسال کنید.", reply_markup=file_management_keyboard)
         return
 
-    file_data = user_temp_file.pop(user_id)
+    file_data = user_temp_link.pop(file_key_dict_key)
     file_id = file_data["file_id"]
     file_type = file_data["file_type"]
     file_name = text
@@ -561,4 +542,3 @@ async def main() -> None:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, stream=sys.stdout)
     asyncio.run(main())
-    
