@@ -2,7 +2,8 @@ import asyncio
 import logging
 import sys
 import os
-import aiohttp
+import random
+import string
 import psycopg2
 from urllib.parse import urlparse
 
@@ -113,7 +114,31 @@ async def command_start_handler(message: Message, state: FSMContext) -> None:
     await state.clear()
     args = message.text.split(maxsplit=1)
     
-    if len(args) > 1 and args[1].startswith("file_"):
+    if len(args) > 1 and args[1].startswith("s="):
+        random_code = args[1].replace("s=", "")
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT link_name, long_url FROM links WHERE short_url LIKE %s AND deleted = 0", (f"%?s={random_code}",))
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+
+        if row:
+            link_name, long_url = row
+            await message.answer(
+                f"🎁 لینک اصلیِ شما (نام: <b>{link_name}</b>):\n\n{long_url}"
+            )
+        else:
+            await message.answer("⚠️ متأسفانه لینک مورد نظر پیدا نشد یا منقضی شده است. ❌")
+            
+        await message.answer(
+            "🏠 به منوی اصلی برگشتید: 👇",
+            reply_markup=main_menu_keyboard
+        )
+        return
+
+    elif len(args) > 1 and args[1].startswith("file_"):
         file_key = args[1].replace("file_", "")
         
         conn = get_db_connection()
@@ -227,24 +252,11 @@ async def process_link_name(message: Message, state: FSMContext) -> None:
 
     long_url = user_temp_link.pop(user_id)["long_url"]
 
-    waiting_msg = await message.answer("⏳ در حال کوتاه کردن لینک با سرویس خارجی... 🔄")
+    waiting_msg = await message.answer("⏳ در حال تولید لینک کوتاه... 🔄")
     
-    short_result = None
-    api_url = f"https://is.gd/create.php?format=simple&url={long_url}"
-    
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(api_url, timeout=10) as response:
-                if response.status == 200:
-                    short_result = await response.text()
-                    short_result = short_result.strip()
-    except Exception as e:
-        logging.error(f"Error shortening link: {e}")
-
-    if not short_result or not short_result.startswith("http"):
-        await waiting_msg.edit_text("⚠️ خطا در ارتباط با سرویس کوتاه‌کننده لینک. لطفاً دوباره تلاش کنید. ❌")
-        await state.clear()
-        return
+    random_code = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
+    bot_info = await message.bot.get_me()
+    short_result = f"https://t.me/{bot_info.username}?s={random_code}"
 
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -340,7 +352,7 @@ async def process_link_callback(callback_query: CallbackQuery):
         await callback_query.message.answer(
             f"📊 **اطلاعات لینک ({link_name}):**\n\n"
             f"🌐 لینک اصلی (طولانی):\n`{long_url}`\n\n"
-            f"🔗 لینک کوتاه شده:\n`{short_result}`",
+            f"🔗 لینک کوتاه شده:\n`{short_url}`",
             parse_mode="Markdown"
         )
         await callback_query.answer("✅ اطلاعات لینک ارسال شد. 🚀")
@@ -441,7 +453,7 @@ async def process_file_callback(callback_query: CallbackQuery):
         
         await callback_query.answer("🗑️ فایل با موفقیت حذف شد. ✅", show_alert=True)
         try:
-            await callback_query.message.edit_text("🗑️ این فایل از لیست شما حذف شد.")
+            await callback_query.message.edit_text("🗑️ این لینک از لیست شما حذف شد.")
         except Exception:
             pass
 
@@ -549,3 +561,4 @@ async def main() -> None:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, stream=sys.stdout)
     asyncio.run(main())
+    
