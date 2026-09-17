@@ -11,7 +11,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
     Message,
-    CallbackQuery,
+    ReplyKeyboardMarkup,
+    KeyboardButton,
     InlineKeyboardMarkup,
     InlineKeyboardButton
 )
@@ -73,55 +74,46 @@ class UploadStates(StatesGroup):
 # دیتابیس موقت برای نگهداری فایل در حال آپلود هر کاربر پیش از نام‌گذاری
 user_temp_file = {}
 
-# --- کیبوردهای اینلاین (شیشه‌ای زیر پیام) ---
-main_menu_markup = InlineKeyboardMarkup(inline_keyboard=[
-    [
-        InlineKeyboardButton(text="🗂️ مدیریت فایل‌ها", callback_data="menu_files"),
-        InlineKeyboardButton(text="🔗 خدمات لینک", callback_data="menu_links")
+# --- کیبوردها (ریپلای پایین صفحه) ---
+main_menu_keyboard = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="🗂️ مدیریت فایل‌ها"), KeyboardButton(text="🔗 خدمات لینک")],
+        [KeyboardButton(text="👤 حساب کاربری")]
     ],
-    [
-        InlineKeyboardButton(text="👤 حساب کاربری", callback_data="menu_account")
-    ]
-])
+    resize_keyboard=True,
+    input_field_placeholder="لطفاً یکی از گزینه‌های زیر را انتخاب کنید... 👇"
+)
 
-link_services_markup = InlineKeyboardMarkup(inline_keyboard=[
-    [
-        InlineKeyboardButton(text="➕ افزودن لینک جدید", callback_data="link_add"),
-        InlineKeyboardButton(text="📋 لینک‌های من", callback_data="link_list")
+link_services_keyboard = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="➕ افزودن لینک جدید"), KeyboardButton(text="📋 لینک‌های من")],
+        [KeyboardButton(text="🔙 بازگشت به منوی اصلی")]
     ],
-    [
-        InlineKeyboardButton(text="🔙 بازگشت به منوی اصلی", callback_data="back_to_main")
-    ]
-])
+    resize_keyboard=True
+)
 
-file_management_markup = InlineKeyboardMarkup(inline_keyboard=[
-    [
-        InlineKeyboardButton(text="📁 آپلود فایل و دریافت لینک", callback_data="file_upload"),
-        InlineKeyboardButton(text="📂 فایل‌های من", callback_data="file_list")
+file_management_keyboard = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="📁 آپلود فایل و دریافت لینک"), KeyboardButton(text="📂 فایل‌های من")],
+        [KeyboardButton(text="🔙 بازگشت به منوی اصلی")]
     ],
-    [
-        InlineKeyboardButton(text="🔙 بازگشت به منوی اصلی", callback_data="back_to_main")
-    ]
-])
+    resize_keyboard=True
+)
 
-back_to_files_markup = InlineKeyboardMarkup(inline_keyboard=[
-    [
-        InlineKeyboardButton(text="🔙 بازگشت", callback_data="menu_files")
-    ]
-])
+back_keyboard = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="🔙 بازگشت")]
+    ],
+    resize_keyboard=True
+)
 
-back_to_links_markup = InlineKeyboardMarkup(inline_keyboard=[
-    [
-        InlineKeyboardButton(text="🔙 بازگشت", callback_data="menu_links")
-    ]
-])
-
-file_received_markup = InlineKeyboardMarkup(inline_keyboard=[
-    [
-        InlineKeyboardButton(text="📥 دریافت لینک دانلود", callback_data="get_download_link"),
-        InlineKeyboardButton(text="🔙 بازگشت", callback_data="menu_files")
-    ]
-])
+file_received_keyboard = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="📥 دریافت لینک دانلود")],
+        [KeyboardButton(text="🔙 بازگشت")]
+    ],
+    resize_keyboard=True
+)
 
 
 @router.message(CommandStart())
@@ -157,56 +149,52 @@ async def command_start_handler(message: Message, state: FSMContext) -> None:
 
         await message.answer(
             "🏠 به منوی اصلی برگشتید: 👇",
-            reply_markup=main_menu_markup
+            reply_markup=main_menu_keyboard
         )
         return
 
     await message.answer(
         f"سلام {message.from_user.first_name}! 👋 به ربات مگابات خوش آمدید. 🤖\nلطفاً یکی از گزینه‌های زیر را انتخاب کنید: 👇",
-        reply_markup=main_menu_markup
+        reply_markup=main_menu_keyboard
     )
 
 
-# --- مدیریت دکمه‌های اینلاین منوها ---
-
-@router.callback_query(F.data == "menu_files")
-async def cb_management_menu(callback: CallbackQuery, state: FSMContext) -> None:
+@router.message(F.text == "🗂️ مدیریت فایل‌ها")
+async def management_menu(message: Message, state: FSMContext) -> None:
     await state.clear()
-    await callback.message.edit_text(
+    await message.answer(
         "🛠️ به بخش مدیریت فایل‌ها خوش آمدید. 📂\nلطفاً یکی از گزینه‌های زیر را انتخاب کنید: 👇",
-        reply_markup=file_management_markup
+        reply_markup=file_management_keyboard
     )
-    await callback.answer()
 
 
-@router.callback_query(F.data == "file_upload")
-async def cb_upload_menu(callback: CallbackQuery, state: FSMContext) -> None:
+@router.message(F.text == "📁 آپلود فایل و دریافت لینک")
+async def upload_menu(message: Message, state: FSMContext) -> None:
     await state.clear()
-    await callback.message.edit_text(
+    await message.answer(
         "📂 لطفاً فایل خود را با هر فرمت دلخواهی که دارید ارسال کنید! 📎✨",
-        reply_markup=back_to_files_markup
+        reply_markup=back_keyboard
     )
-    await callback.answer()
 
 
-@router.callback_query(F.data == "menu_links")
-async def cb_link_services_menu(callback: CallbackQuery, state: FSMContext) -> None:
+# --- بخش خدمات لینک ---
+
+@router.message(F.text == "🔗 خدمات لینک")
+async def link_services_menu(message: Message, state: FSMContext) -> None:
     await state.clear()
-    await callback.message.edit_text(
+    await message.answer(
         "🔗 به بخش خدمات لینک و کوتاه‌کننده خوش آمدید. 🌐\nلطفاً یکی از گزینه‌های زیر را انتخاب کنید: 👇",
-        reply_markup=link_services_markup
+        reply_markup=link_services_keyboard
     )
-    await callback.answer()
 
 
-@router.callback_query(F.data == "link_add")
-async def cb_add_new_link_prompt(callback: CallbackQuery, state: FSMContext) -> None:
+@router.message(F.text == "➕ افزودن لینک جدید")
+async def add_new_link_prompt(message: Message, state: FSMContext) -> None:
     await state.set_state(UploadStates.waiting_for_new_link)
-    await callback.message.edit_text(
+    await message.answer(
         "🔗 لطفاً لینک طولانی خود را ارسال کنید تا آن را کوتاه کنم و در لیست شما ذخیره کنم: 📝✨",
-        reply_markup=back_to_links_markup
+        reply_markup=back_keyboard
     )
-    await callback.answer()
 
 
 async def shorten_url(long_url: str) -> str:
@@ -223,6 +211,14 @@ async def shorten_url(long_url: str) -> str:
 @router.message(UploadStates.waiting_for_new_link, F.text)
 async def process_new_link(message: Message, state: FSMContext) -> None:
     user_link = message.text.strip()
+    
+    if user_link == "🔙 بازگشت":
+        await state.clear()
+        await message.answer(
+            "🔙 به بخش خدمات لینک برگشتید: 👇",
+            reply_markup=link_services_keyboard
+        )
+        return
 
     if not (user_link.startswith("http://") or user_link.startswith("https://") or user_link.startswith("www.")):
         await message.answer("⚠️ لطفاً یک لینک معتبر (شروع شده با http یا https) ارسال کنید: ❌")
@@ -244,17 +240,20 @@ async def process_new_link(message: Message, state: FSMContext) -> None:
         await state.clear()
         await waiting_msg.edit_text(
             f"🎉 لینک شما با موفقیت کوتاه و ذخیره شد! ✅\n\n🔗 لینک کوتاه شده:\n`{short_result}`\n\n✨ می‌توانید از این لینک در پیامک یا هر جای دیگری استفاده کنید.",
-            parse_mode="Markdown",
-            reply_markup=link_services_markup
+            parse_mode="Markdown"
+        )
+        await message.answer(
+            "🔙 بازگشت به بخش خدمات لینک: 👇",
+            reply_markup=link_services_keyboard
         )
     else:
-        await waiting_msg.edit_text("❌ خطا در کوتاه‌کردن لینک. لطفاً دوباره تلاش کنید.", reply_markup=link_services_markup)
+        await waiting_msg.edit_text("❌ خطا در کوتاه‌کردن لینک. لطفاً دوباره تلاش کنید.")
 
 
-@router.callback_query(F.data == "link_list")
-async def cb_list_user_links(callback: CallbackQuery, state: FSMContext) -> None:
+@router.message(F.text == "📋 لینک‌های من")
+async def list_user_links(message: Message, state: FSMContext) -> None:
     await state.clear()
-    user_id = callback.from_user.id
+    user_id = message.from_user.id
 
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -264,49 +263,49 @@ async def cb_list_user_links(callback: CallbackQuery, state: FSMContext) -> None
     conn.close()
 
     if not rows:
-        await callback.message.edit_text(
+        await message.answer(
             "📭 شما هنوز هیچ لینکی در ربات ذخیره نکرده‌اید. ⚠️",
-            reply_markup=link_services_markup
+            reply_markup=link_services_keyboard
         )
-        await callback.answer()
         return
 
     links_text = "📋 لیست لینک‌های کوتاه شده‌ی شما: 👇\n\n"
     for idx, item in enumerate(rows, 1):
         links_text += f"{idx}. اصلی: {item[0]}\n   کوتاه: `{item[1]}`\n\n"
 
-    await callback.message.edit_text(
+    await message.answer(
         links_text,
         parse_mode="Markdown",
-        reply_markup=link_services_markup
+        reply_markup=link_services_keyboard
     )
-    await callback.answer()
 
 
-@router.callback_query(F.data == "menu_account")
-async def cb_user_account_handler(callback: CallbackQuery, state: FSMContext) -> None:
+@router.message(F.text == "👤 حساب کاربری")
+async def user_account_handler(message: Message, state: FSMContext) -> None:
     await state.clear()
-    
-    back_to_main_markup = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 بازگشت به منوی اصلی", callback_data="back_to_main")]
-    ])
-    
-    await callback.message.edit_text(
+    await message.answer(
         "👤 **اطلاعات حساب کاربری شما:** 📊\n\n✨ وضعیت اشتراک: عادی 🌟\n🎁 موجودی ترافیک: رایگان 🚀",
         parse_mode="Markdown",
-        reply_markup=back_to_main_markup
+        reply_markup=main_menu_keyboard
     )
-    await callback.answer()
 
 
-@router.callback_query(F.data == "back_to_main")
-async def cb_back_to_main(callback: CallbackQuery, state: FSMContext) -> None:
+@router.message(F.text == "🔙 بازگشت")
+async def back_action(message: Message, state: FSMContext) -> None:
     await state.clear()
-    await callback.message.edit_text(
-        "🏠 به منوی اصلی برگشتید: 👇",
-        reply_markup=main_menu_markup
+    await message.answer(
+        "🔙 به بخش مدیریت فایل‌ها برگشتید: 👇",
+        reply_markup=file_management_keyboard
     )
-    await callback.answer()
+
+
+@router.message(F.text == "🔙 بازگشت به منوی اصلی")
+async def back_to_main(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    await message.answer(
+        "🏠 به منوی اصلی برگشتید: 👇",
+        reply_markup=main_menu_keyboard
+    )
 
 
 @router.message(F.document | F.video | F.audio | F.photo)
@@ -336,7 +335,7 @@ async def handle_files(message: Message, state: FSMContext) -> None:
     await state.set_state(UploadStates.waiting_for_file_name)
     await message.answer(
         "✅ فایل با موفقیت دریافت شد. 📁\n\n✍️ لطفاً یک نام (فقط به صورت متن) برای این فایل انتخاب و ارسال کنید: 👇",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 بازگشت", callback_data="menu_files")]])
+        reply_markup=back_keyboard
     )
 
 
@@ -345,8 +344,16 @@ async def save_file_name(message: Message, state: FSMContext) -> None:
     user_id = message.from_user.id
     file_name = message.text.strip()
 
+    if file_name == "🔙 بازگشت":
+        await state.clear()
+        await message.answer(
+            "🔙 به بخش مدیریت فایل‌ها برگشتید: 👇",
+            reply_markup=file_management_keyboard
+        )
+        return
+
     if user_id not in user_temp_file:
-        await message.answer("⚠️ خطایی رخ داد. لطفاً دوباره فایل خود را ارسال کنید. ❌", reply_markup=file_management_markup)
+        await message.answer("⚠️ خطایی رخ داد. لطفاً دوباره فایل خود را ارسال کنید. ❌", reply_markup=file_management_keyboard)
         await state.clear()
         return
 
@@ -371,7 +378,7 @@ async def save_file_name(message: Message, state: FSMContext) -> None:
 
     await message.answer(
         f"🎉 نام فایل با موفقیت ثبت شد: <b>{file_name}</b> ✅\n\nحالا روی دکمه‌ی زیر کلیک کنید تا لینک دانلود را دریافت کنید: 👇",
-        reply_markup=file_received_markup
+        reply_markup=file_received_keyboard
     )
 
 
@@ -380,8 +387,8 @@ async def invalid_file_name(message: Message) -> None:
     await message.answer("⚠️ لطفاً نام فایل را **فقط به صورت متن** ارسال کنید: ❌")
 
 
-@router.callback_query(F.data == "get_download_link")
-async def cb_get_download_link(callback: CallbackQuery, state: FSMContext) -> None:
+@router.message(F.text == "📥 دریافت لینک دانلود")
+async def get_download_link(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     file_key = data.get("current_file_key")
 
@@ -393,28 +400,26 @@ async def cb_get_download_link(callback: CallbackQuery, state: FSMContext) -> No
     conn.close()
 
     if file_key and row and row[1] == 0:
-        bot_info = await callback.bot.get_me()
+        bot_info = await message.bot.get_me()
         share_link = f"https://t.me/{bot_info.username}?start=file_{file_key}"
         file_name = row[0]
 
-        await callback.message.edit_text(
+        await message.answer(
             f"🔗 لینک اختصاصی دانلود فایل (<b>{file_name}</b>): 📥\n{share_link}\n\n✨ هرکس روی این لینک کلیک کند، ربات مستقیماً فایل را به او تحویل می‌دهد! 🚀",
-            reply_markup=file_management_markup,
-            parse_mode="HTML"
+            reply_markup=file_management_keyboard
         )
         await state.clear()
     else:
-        await callback.message.edit_text(
+        await message.answer(
             "⚠️ ابتدا یک فایل جدید ارسال کنید و برای آن نام انتخاب کنید. ❌",
-            reply_markup=file_management_markup
+            reply_markup=file_management_keyboard
         )
-    await callback.answer()
 
 
-@router.callback_query(F.data == "file_list")
-async def cb_list_user_files(callback: CallbackQuery, state: FSMContext) -> None:
+@router.message(F.text == "📂 فایل‌های من")
+async def list_user_files(message: Message, state: FSMContext) -> None:
     await state.clear()
-    user_id = callback.from_user.id
+    user_id = message.from_user.id
 
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -424,11 +429,10 @@ async def cb_list_user_files(callback: CallbackQuery, state: FSMContext) -> None
     conn.close()
 
     if not rows:
-        await callback.message.edit_text(
+        await message.answer(
             "📭 شما هنوز هیچ فایلی در ربات آپلود نکرده‌اید. ⚠️",
-            reply_markup=file_management_markup
+            reply_markup=file_management_keyboard
         )
-        await callback.answer()
         return
 
     inline_keyboard = []
@@ -436,20 +440,21 @@ async def cb_list_user_files(callback: CallbackQuery, state: FSMContext) -> None
         btn_view = InlineKeyboardButton(text=f"📄 {file_name}", callback_data=f"view_{file_key}")
         btn_delete = InlineKeyboardButton(text="🗑️ حذف فایل", callback_data=f"del_{file_key}")
         inline_keyboard.append([btn_view, btn_delete])
-    
-    inline_keyboard.append([InlineKeyboardButton(text="🔙 بازگشت", callback_data="menu_files")])
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=inline_keyboard)
 
-    await callback.message.edit_text(
+    await message.answer(
         "📋 فایل‌های شما به شرح زیر است: 📂\n\nبرای مشاهده هر فایل روی نام آن و برای حذف روی دکمه‌ی مربوطه کلیک کنید: 👇",
         reply_markup=keyboard
     )
-    await callback.answer()
+    await message.answer(
+        "🔙 برای بازگشت از منوی زیر استفاده کنید: 👇",
+        reply_markup=file_management_keyboard
+    )
 
 
 @router.callback_query(F.data.startswith("view_") | F.data.startswith("del_"))
-async def process_file_callback(callback_query: CallbackQuery):
+async def process_file_callback(callback_query):
     data = callback_query.data
     action, file_key = data.split("_", 1)
 
@@ -504,7 +509,7 @@ async def process_file_callback(callback_query: CallbackQuery):
 
         await callback_query.answer("🗑️ فایل با موفقیت حذف شد. ✅", show_alert=True)
         try:
-            await callback_query.message.edit_text("✅ این فایل از لیست شما حذف شد. 🗑️", reply_markup=file_management_markup)
+            await callback_query.message.edit_text("✅ این فایل از لیست شما حذف شد. 🗑️")
         except Exception:
             pass
 
