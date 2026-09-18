@@ -274,9 +274,10 @@ async def receive_file_name(message: Message, state: FSMContext) -> None:
 
     await state.clear()
     await message.answer(
-        f"🎉 فایل شما با نام **{file_name}** ثبت شد! ✅\n\n"
-        f"🔗 لینک اختصاصی:\n`{share_link}`",
-        parse_mode="Markdown",
+        f"🎉 فایل شما با نام <b>{file_name}</b> ثبت شد! ✅\n\n"
+        f"🔗 لینک اختصاصی:\n"
+        f"<a href='{share_link}'>دانلود و دریافت فایل</a>",
+        parse_mode="HTML",
         reply_markup=file_management_keyboard
     )
 
@@ -336,7 +337,8 @@ async def file_callbacks(callback_query: CallbackQuery):
         bot_info = await callback_query.bot.get_me()
         share_link = f"https://t.me/{bot_info.username}?start=file_{file_key}"
         await callback_query.message.answer(
-            f"🔗 لینک اختصاصی فایل (<b>{file_name}</b>):\n\n`{share_link}`",
+            f"🔗 لینک اختصاصی فایل (<b>{file_name}</b>):\n\n"
+            f"<a href='{share_link}'>کلیک کنید برای دانلود فایل</a>",
             parse_mode="HTML"
         )
         await callback_query.answer("✅ لینک ارسال شد.")
@@ -431,7 +433,8 @@ async def receive_link_name(message: Message, state: FSMContext) -> None:
     await message.answer(
         f"🎉 لینک شما با موفقیت کوتاه شد! ✅\n\n"
         f"📌 نام: <b>{link_name}</b>\n"
-        f"🔗 لینک کوتاه شده:\n`{short_result}`",
+        f"🔗 لینک کوتاه شده:\n"
+        f"<a href='{short_result}'>{short_result}</a>",
         parse_mode="HTML",
         reply_markup=link_services_keyboard
     )
@@ -490,10 +493,10 @@ async def link_callbacks(callback_query: CallbackQuery):
             return
         
         await callback_query.message.answer(
-            f"📊 **اطلاعات لینک ({link_name}):**\n\n"
-            f"🌐 لینک اصلی:\n`{long_url}`\n\n"
-            f"🔗 لینک کوتاه:\n`{short_url}`",
-            parse_mode="Markdown"
+            f"📊 <b>اطلاعات لینک ({link_name}):</b>\n\n"
+            f"🌐 لینک اصلی:\n<a href='{long_url}'>{long_url}</a>\n\n"
+            f"🔗 لینک کوتاه:\n<a href='{short_url}'>{short_url}</a>",
+            parse_mode="HTML"
         )
         await callback_query.answer("✅ اطلاعات ارسال شد.")
 
