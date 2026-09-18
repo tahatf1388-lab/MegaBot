@@ -273,7 +273,6 @@ async def receive_file_name(message: Message, state: FSMContext) -> None:
     share_link = f"https://t.me/{bot_info.username}?start=file_{file_key}"
 
     await state.clear()
-    # ارسال لینک کامل و به صورت متن معمولی
     await message.answer(
         f"🎉 فایل شما با نام {file_name} ثبت شد! ✅\n\n"
         f"🔗 لینک اختصاصی:\n"
@@ -316,7 +315,7 @@ async def file_callbacks(callback_query: CallbackQuery):
     
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT file_name, deleted FROM files WHERE file_key = %s", (file_key,))
+    cursor.execute("SELECT file_id, file_type, file_name, deleted FROM files WHERE file_key = %s", (file_key,))
     row = cursor.fetchone()
 
     if not row:
@@ -325,7 +324,7 @@ async def file_callbacks(callback_query: CallbackQuery):
         await callback_query.answer("⚠️ این فایل دیگر وجود ندارد.", show_alert=True)
         return
 
-    file_name, deleted = row
+    file_id, file_type, file_name, deleted = row
 
     if action == "vfile":
         cursor.close()
@@ -334,15 +333,25 @@ async def file_callbacks(callback_query: CallbackQuery):
             await callback_query.answer("⚠️ این فایل حذف شده است.", show_alert=True)
             return
         
+        # ۱. ابتدا خود فایل را ارسال می‌کند
+        await callback_query.message.answer(f"📁 فایل شما ({file_name}): 👇")
+        if file_type == "document":
+            await callback_query.message.answer_document(file_id)
+        elif file_type == "video":
+            await callback_query.message.answer_video(file_id)
+        elif file_type == "audio":
+            await callback_query.message.answer_audio(file_id)
+        elif file_type == "photo":
+            await callback_query.message.answer_photo(file_id)
+
+        # ۲. سپس لینک اختصاصی را در پیام بعدی ارسال می‌کند
         bot_info = await callback_query.bot.get_me()
         share_link = f"https://t.me/{bot_info.username}?start=file_{file_key}"
-        
-        # ارسال لینک کامل در بخش فایل‌های من به صورت متن ساده
         await callback_query.message.answer(
             f"🔗 لینک اختصاصی فایل ({file_name}):\n\n"
             f"{share_link}"
         )
-        await callback_query.answer("✅ لینک ارسال شد.")
+        await callback_query.answer("✅ فایل و لینک ارسال شد.")
 
     elif action == "dfile":
         cursor.execute("UPDATE files SET deleted = 1 WHERE file_key = %s", (file_key,))
@@ -431,7 +440,6 @@ async def receive_link_name(message: Message, state: FSMContext) -> None:
     conn.close()
 
     await state.clear()
-    # ارسال لینک کوتاه شده به صورت متن معمولی کامل
     await message.answer(
         f"🎉 لینک شما با موفقیت کوتاه شد! ✅\n\n"
         f"📌 نام: {link_name}\n"
@@ -493,7 +501,6 @@ async def link_callbacks(callback_query: CallbackQuery):
             await callback_query.answer("⚠️ این لینک حذف شده است.", show_alert=True)
             return
         
-        # ارسال اطلاعات لینک در بخش «لینک‌های من» به صورت متن ساده
         await callback_query.message.answer(
             f"📊 اطلاعات لینک ({link_name}):\n\n"
             f"🌐 لینک اصلی:\n{long_url}\n\n"
@@ -526,3 +533,4 @@ async def main() -> None:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, stream=sys.stdout)
     asyncio.run(main())
+    
