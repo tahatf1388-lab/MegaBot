@@ -4,7 +4,7 @@ import sys
 import os
 import aiohttp
 import psycopg2
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 from aiohttp import web
 from aiogram import Bot, Dispatcher, F, Router
@@ -416,6 +416,11 @@ async def receive_link_name(message: Message, state: FSMContext) -> None:
                 if resp.status == 200 or resp.status == 201:
                     data = await resp.json()
                     short_url = data.get("link") or data.get("full_url")
+                    # اصلاح دامنه اشتباه Kutt به دامنه صحیح ریلوی
+                    if short_url:
+                        parsed_short = urlparse(short_url)
+                        parsed_short = parsed_short._replace(netloc="kutt-production-0880.up.railway.app", scheme="https")
+                        short_url = urlunparse(parsed_short)
                 else:
                     error_details = await resp.text()
                     logging.error(f"Kutt API Error: {resp.status} - {error_details}")
