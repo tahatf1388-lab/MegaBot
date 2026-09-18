@@ -186,6 +186,15 @@ async def link_services_menu(message: Message, state: FSMContext) -> None:
     )
 
 
+@router.message(F.text == "📁 آپلود فایل و دریافت لینک")
+async def upload_file_prompt(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    await message.answer(
+        "📥 لطفاً فایل خود (سند، ویدیو، صوت یا تصویر) را بفرستید تا آن را ذخیره کنم و لینک اختصاصی‌اش را به شما تحویل دهم: 👇",
+        reply_markup=back_keyboard
+    )
+
+
 @router.message(F.text == "➕ افزودن لینک جدید")
 async def add_new_link_prompt(message: Message, state: FSMContext) -> None:
     await state.set_state(UploadStates.waiting_for_link_url)
@@ -361,15 +370,6 @@ async def process_link_callback(callback_query: CallbackQuery):
             await callback_query.message.edit_text("🗑️ این لینک از لیست شما حذف شد.")
         except Exception:
             pass
-
-
-@router.message(F.text == "📁 آپلود فایل و دریافت لینک")
-async def upload_file_prompt(message: Message, state: FSMContext) -> None:
-    await state.clear()
-    await message.answer(
-        "📥 لطفاً فایل خود (سند، ویدیو، صوت یا تصویر) را بفرستید تا آن را ذخیره کنم و لینک اختصاصی‌اش را به شما تحویل دهم: 👇",
-        reply_markup=back_keyboard
-    )
 
 
 @router.message(F.text == "📂 فایل‌های من")
