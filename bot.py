@@ -548,6 +548,21 @@ async def back_to_main(message: Message, state: FSMContext) -> None:
     )
 
 
+# هندلر عمومی برای جلوگیری از خطای unhandled به همراه دکمه‌ی بازگشت عمومی
+@router.message(F.text)
+async def handle_unhandled_text(message: Message, state: FSMContext) -> None:
+    text = message.text.strip()
+    if text == "🔙 بازگشت":
+        await state.clear()
+        await message.answer("🔙 به منوی اصلی برگشتید: 👇", reply_markup=main_menu_keyboard)
+    else:
+        await state.clear()
+        await message.answer(
+            "لطفاً از دکمه‌های منوی زیر استفاده کنید: 👇",
+            reply_markup=main_menu_keyboard
+        )
+
+
 async def main() -> None:
     bot = Bot(token=TOKEN)
     dp = Dispatcher()
