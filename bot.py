@@ -363,6 +363,15 @@ async def process_link_callback(callback_query: CallbackQuery):
             pass
 
 
+@router.message(F.text == "📁 آپلود فایل و دریافت لینک")
+async def upload_file_prompt(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    await message.answer(
+        "📥 لطفاً فایل خود (سند، ویدیو، صوت یا تصویر) را بفرستید تا آن را ذخیره کنم و لینک اختصاصی‌اش را به شما تحویل دهم: 👇",
+        reply_markup=back_keyboard
+    )
+
+
 @router.message(F.text == "📂 فایل‌های من")
 async def list_user_files(message: Message, state: FSMContext) -> None:
     await state.clear()
