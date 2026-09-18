@@ -22,6 +22,9 @@ from aiogram.types import (
 TOKEN = "8844658209:AAH41cGWIdMiSLQq8PO5VNU_qds7vWJpmmE"
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+# کلید API مربوط به سرویس Kutt (از سایت kutt.it تهیه کنید)
+KUTT_API_KEY = "YOUR_KUTT_API_KEY"
+
 router = Router()
 
 def get_db_connection():
@@ -109,19 +112,27 @@ back_keyboard = ReplyKeyboardMarkup(
 )
 
 
-async def shorten_url_b2n(long_url: str) -> str:
-    api_url = f"https://b2n.ir/api.php?url={long_url}"
+async def shorten_url_kutt(long_url: str) -> str:
+    api_url = "https://api.kutt.it/v2/links"
+    headers = {
+        "X-API-KEY": KUTT_API_KEY,
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "target": long_url
+    }
+    
     try:
         timeout = aiohttp.ClientTimeout(total=7)
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(api_url) as response:
+            async with session.post(api_url, json=payload, headers=headers) as response:
                 if response.status == 200:
-                    short_url = await response.text()
-                    short_url = short_url.strip()
-                    if short_url.startswith("http"):
+                    data = await response.json()
+                    short_url = data.get("link")
+                    if short_url:
                         return short_url
     except Exception as e:
-        logging.warning(f"b2n.ir failed: {e}")
+        logging.warning(f"Kutt API failed: {e}")
     return None
 
 
@@ -335,7 +346,6 @@ async def file_callbacks(callback_query: CallbackQuery):
             await callback_query.answer("⚠️ این فایل حذف شده است.", show_alert=True)
             return
         
-        # ۱. ابتدا خود فایل را ارسال می‌کند
         await callback_query.message.answer(f"📁 فایل شما ({file_name}): 👇")
         if file_type == "document":
             await callback_query.message.answer_document(file_id)
@@ -346,7 +356,6 @@ async def file_callbacks(callback_query: CallbackQuery):
         elif file_type == "photo":
             await callback_query.message.answer_photo(file_id)
 
-        # ۲. سپس لینک اختصاصی را در پیام بعدی ارسال می‌کند
         bot_info = await callback_query.bot.get_me()
         share_link = f"https://t.me/{bot_info.username}?start=file_{file_key}"
         await callback_query.message.answer(
@@ -373,7 +382,7 @@ async def file_callbacks(callback_query: CallbackQuery):
 @router.message(F.text == "➕ افزودن لینک جدید")
 async def add_link_prompt(message: Message, state: FSMContext) -> None:
     await state.set_state(BotStates.waiting_for_link_url)
-    await message.answer("🔗 لطفاً لینک طولانی خود را ارسال کنید تا با **b2n.ir** کوتاه شود: 👇", reply_markup=back_keyboard)
+    await message.answer("🔗 لطفاً لینک طولانی خود را ارسال کنید تا کوتاه شود: 👇", reply_markup=back_keyboard)
 
 
 @router.message(BotStates.waiting_for_link_url, F.text == "🔙 بازگشت")
@@ -415,7 +424,7 @@ async def receive_link_name(message: Message, state: FSMContext) -> None:
     long_url = user_temp_storage.pop(user_id)["long_url"]
     waiting_msg = await message.answer("⏳ در حال کوتاه‌سازی لینک...")
 
-    short_result = await shorten_url_b2n(long_url)
+    short_result = await shorten_url_kutt(long_url)
 
     try:
         await waiting_msg.delete()
@@ -423,7 +432,7 @@ async def receive_link_name(message: Message, state: FSMContext) -> None:
         pass
 
     if not short_result:
-        await message.answer("⚠️ خطا در ارتباط با b2n.ir. لطفاً بعداً تلاش کنید.", reply_markup=link_services_keyboard)
+        await message.answer("⚠️ خطا در کوتاه‌سازی لینک. لطفاً بعداً تلاش کنید.", reply_markup=link_services_keyboard)
         await state.clear()
         return
 
