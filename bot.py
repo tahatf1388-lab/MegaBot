@@ -167,10 +167,13 @@ async def command_start_handler(message: Message, state: FSMContext) -> None:
     )
 
 
-@router.message(F.text == "🗂️ مدیریت فایل‌ها")
-async def management_menu(message: Message, state: FSMContext) -> None:
-    await state.clear()
-    await message.answer("🛠️ به بخش مدیریت فایل‌ها خوش آمدید. 📂\nانتخاب کنید: 👇", reply_markup=file_management_keyboard)
+@router.message(F.text.contains("آپلود فایل"))
+async def upload_file_prompt(message: Message, state: FSMContext) -> None:
+    await state.set_state(BotStates.waiting_for_file_upload)
+    await message.answer(
+        "📥 لطفاً فایل خود (سند، ویدیو، صوت یا تصویر) را بفرستید تا لینک اختصاصی‌اش را تحویل بگیرید: 👇",
+        reply_markup=back_keyboard
+    )
 
 
 @router.message(F.text == "🔗 خدمات لینک")
