@@ -68,8 +68,8 @@ def init_db():
 init_db()
 
 class UploadStates(StatesGroup):
-    waiting_for_file_upload = State()  # حالت انتظار برای دریافت فایل
-    waiting_for_file_name = State()   # حالت انتظار برای نام‌گذاری فایل
+    waiting_for_file_upload = State()
+    waiting_for_file_name = State()
     waiting_for_link_url = State()
     waiting_for_link_name = State()
 
@@ -109,7 +109,6 @@ back_keyboard = ReplyKeyboardMarkup(
 
 
 async def shorten_url_b2n(long_url: str) -> str:
-    """کوتاه‌کننده لینک با استفاده از API سایت b2n.ir"""
     api_url = f"https://b2n.ir/api.php?url={long_url}"
     try:
         timeout = aiohttp.ClientTimeout(total=7)
@@ -187,7 +186,7 @@ async def link_services_menu(message: Message, state: FSMContext) -> None:
     )
 
 
-# هندلر فعال‌سازی حالت آپلود فایل پس از کلیک روی دکمه مربوطه
+# هندلر کلیک روی دکمه آپلود فایل (اصلی‌ترین بخش گمشده/دارای مشکل)
 @router.message(F.text == "📁 آپلود فایل و دریافت لینک")
 async def upload_file_menu_prompt(message: Message, state: FSMContext) -> None:
     await state.set_state(UploadStates.waiting_for_file_upload)
@@ -458,14 +457,12 @@ async def process_file_callback(callback_query: CallbackQuery):
             pass
 
 
-# مدیریت دکمه بازگشت در هنگام انتظار برای آپلود فایل
 @router.message(F.text == "🔙 بازگشت", UploadStates.waiting_for_file_upload)
 async def cancel_file_upload(message: Message, state: FSMContext) -> None:
     await state.clear()
     await message.answer("🔙 به بخش مدیریت فایل‌ها برگشتید: 👇", reply_markup=file_management_keyboard)
 
 
-# دریافت فایل فقط در زمانی که کاربر در وضعیت آپلود فایل قرار دارد
 @router.message(UploadStates.waiting_for_file_upload, F.document | F.video | F.audio | F.photo)
 async def handle_user_files(message: Message, state: FSMContext) -> None:
     user_id = message.from_user.id
@@ -540,7 +537,7 @@ async def process_file_name_step(message: Message, state: FSMContext) -> None:
     await message.answer(
         f"🎉 فایل شما با نام **{file_name}** ثبت شد! ✅\n\n"
         f"🔗 لینک اختصاصی برای اشتراک‌گذاری:\n`{share_link}`",
-        parse_mode="Markdown",
+        parse_Mode="Markdown",
         reply_markup=file_management_keyboard
     )
 
@@ -566,3 +563,4 @@ async def main() -> None:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, stream=sys.stdout)
     asyncio.run(main())
+    
