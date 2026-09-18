@@ -63,16 +63,24 @@ def init_db():
             link_name TEXT,
             long_url TEXT,
             short_url TEXT,
+            password TEXT,
+            expire_date TEXT,
+            expire_gregorian TIMESTAMP,
             deleted INTEGER DEFAULT 0
         )
     """)
+    # Ezafe kardan sotonhaye jadid agar ghablan sakhte shode bashand
+    cursor.execute("ALTER TABLE links ADD COLUMN IF NOT EXISTS password TEXT;")
+    cursor.execute("ALTER TABLE links ADD COLUMN IF NOT EXISTS expire_date TEXT;")
+    cursor.execute("ALTER TABLE links ADD COLUMN IF NOT EXISTS expire_gregorian TIMESTAMP;")
+    
     conn.commit()
     cursor.close()
     conn.close()
 
 init_db()
 
-# Tabdil-e sade-ye tarikh shamsi be milادی (بدون نیاز به پکیج خارجی)
+# Tabdil-e tarikh shamsi be miladi
 def jalali_to_gregorian(jy, jm, jd):
     gy = (jy <= 979) and 621 or 1600
     jy = (jy <= 979) and jy or jy - 979
@@ -403,7 +411,7 @@ async def file_callbacks(callback_query: CallbackQuery):
             pass
 
 
-# ================= Bakhsh-e Khadamat Link (Kutt API + Password + Expiration) =================
+# ================= Bakhsh-e Khadamat Link =================
 
 @router.message(F.text == "➕ افزودن لینک جدید")
 async def add_link_prompt(message: Message, state: FSMContext) -> None:
@@ -506,6 +514,8 @@ async def receive_expire_choice(message: Message, state: FSMContext) -> None:
 
     if text == "⏭️ رد کردن":
         user_temp_storage[user_id]["expire_at"] = None
+        user_temp_storage[user_id]["expire_date_str"] = None
+        user_temp_storage[user_id]["expire_gregorian"] = None
         await finalize_and_create_link(message, state)
     elif text == "⏳ بله، تعیین تاریخ انقضا":
         await state.set_state(BotStates.waiting_for_link_expire_date)
@@ -543,6 +553,9 @@ async def receive_link_expire_date(message: Message, state: FSMContext) -> None:
         iso_expire = gregorian_date.strftime("%Y-%m-%dT23:59:59.000Z")
         
         user_temp_storage[user_id]["expire_at"] = iso_expire
+        user_temp_storage[user_id]["expire_date_str"] = date_text
+        user_temp_storage[user_id]["expire_gregorian"] = gregorian_date
+        
         await finalize_and_create_link(message, state)
     except Exception:
         await message.answer("⚠️ فرمت تاریخ نامعتبر است! لطفاً تاریخ را به صورت صحیح و شمسی مانند `1405/07/15` وارد کنید:", reply_markup=back_keyboard)
@@ -561,6 +574,8 @@ async def finalize_and_create_link(message: Message, state: FSMContext) -> None:
     link_name = data["link_name"]
     password = data.get("password")
     expire_at = data.get("expire_at")
+    expire_date_str = data.get("expire_date_str")
+    expire_gregorian = data.get("expire_gregorian")
 
     short_url = None
     error_details = ""
@@ -606,9 +621,9 @@ async def finalize_and_create_link(message: Message, state: FSMContext) -> None:
     link_id = f"link_{user_id}_{count + 1}"
 
     cursor.execute("""
-        INSERT INTO links (link_id, user_id, link_name, long_url, short_url, deleted)
-        VALUES (%s, %s, %s, %s, %s, 0)
-    """, (link_id, user_id, link_name, long_url, short_url))
+        INSERT INTO links (link_id, user_id, link_name, long_url, short_url, password, expire_date, expire_gregorian, deleted)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 0)
+    """, (link_id, user_id, link_name, long_url, short_url, password, expire_date_str, expire_gregorian))
     conn.commit()
     cursor.close()
     conn.close()
@@ -618,7 +633,7 @@ async def finalize_and_create_link(message: Message, state: FSMContext) -> None:
         f"🎉 لینک شما با موفقیت کوتاه و تنظیم شد! ✅\n\n"
         f"📌 نام: {link_name}\n"
         f"🔒 رمز عبور: {'دارد ✅' if password else 'ندارد ❌'}\n"
-        f"⏳ تاریخ انقضا: {'تنظیم شد ✅' if expire_at else 'ندارد ❌'}\n\n"
+        f"⏳ تاریخ انقضا: {expire_date_str if expire_date_str else 'ندارد ❌'}\n\n"
         f"🔗 لینک کوتاه شده:\n"
         f"{short_url}",
         reply_markup=link_services_keyboard
@@ -659,7 +674,7 @@ async def link_callbacks(callback_query: CallbackQuery):
 
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT link_name, long_url, short_url, deleted FROM links WHERE link_id = %s", (link_key_id,))
+    cursor.execute("SELECT link_name, long_url, short_url, password, expire_date, expire_gregorian, deleted FROM links WHERE link_id = %s", (link_key_id,))
     row = cursor.fetchone()
 
     if not row:
@@ -668,7 +683,7 @@ async def link_callbacks(callback_query: CallbackQuery):
         await callback_query.answer("⚠️ این لینک وجود ندارد.", show_alert=True)
         return
 
-    link_name, long_url, short_url, deleted = row
+    link_name, long_url, short_url, password, expire_date, expire_gregorian, deleted = row
 
     if action == "vlink":
         cursor.close()
@@ -677,10 +692,27 @@ async def link_callbacks(callback_query: CallbackQuery):
             await callback_query.answer("⚠️ این لینک حذف شده است.", show_alert=True)
             return
         
+        # Check password text
+        if password:
+            pass_text = f"🔒 رمز عبور: {password}"
+        else:
+            pass_text = "🔒 رمز عبور: ندارد ❌"
+
+        # Check expiration status
+        if expire_date:
+            if expire_gregorian and datetime.now() > expire_gregorian:
+                expire_text = f"⏳ تاریخ انقضا: {expire_date} (منقضی شده ❌)"
+            else:
+                expire_text = f"⏳ تاریخ انقضا: {expire_date} ✅"
+        else:
+            expire_text = "⏳ تاریخ انقضا: ندارد ❌"
+
         await callback_query.message.answer(
             f"📊 اطلاعات لینک ({link_name}):\n\n"
             f"🌐 لینک اصلی:\n{long_url}\n\n"
-            f"🔗 لینک کوتاه:\n{short_url}"
+            f"🔗 لینک کوتاه:\n{short_url}\n\n"
+            f"{pass_text}\n"
+            f"{expire_text}"
         )
         await callback_query.answer("✅ اطلاعات ارسال شد.")
 
