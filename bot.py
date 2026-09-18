@@ -5,8 +5,7 @@ import os
 import aiohttp
 import psycopg2
 from urllib.parse import urlparse, urlunparse
-from datetime import datetime
-import jdatetime
+from datetime import datetime, timedelta
 
 from aiohttp import web
 from aiogram import Bot, Dispatcher, F, Router
@@ -25,7 +24,6 @@ from aiogram.types import (
 TOKEN = "8844658209:AAH41cGWIdMiSLQq8PO5VNU_qds7vWJpmmE"
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# Etelaat-e Kutt Service
 KUTT_API_URL = "https://kutt-production-0880.up.railway.app/api/v2/links"
 KUTT_API_KEY = "OBwH3VujRdD29sakT7dgJ_OqEGxWz8KZ2mWw5EkJ"
 
@@ -74,6 +72,35 @@ def init_db():
 
 init_db()
 
+# Tabdil-e sade-ye tarikh shamsi be milادی (بدون نیاز به پکیج خارجی)
+def jalali_to_gregorian(jy, jm, jd):
+    gy = (jy <= 979) and 621 or 1600
+    jy = (jy <= 979) and jy or jy - 979
+    days = (365 * jy + (jy // 33) * 8 + (jy % 33 + 3) // 4 + 
+            78 + jd + (jm < 7 and (jm - 1) * 31 or (jm - 7) * 30 + 186))
+    gy += 400 * (days // 146097)
+    days %= 146097
+    if days > 36524:
+        gy += 100 * (--days // 36524)
+        days %= 36524
+        if days >= 365:
+            days += 1
+    gy += 4 * (days // 1461)
+    days %= 1461
+    if days > 365:
+        gy += (days - 1) // 365
+        days = (days - 1) % 365
+    gd = days + 1
+    sal_a = [0, 31, ((gy % 4 == 0 and gy % 100 != 0) or (gy % 400 == 0)) and 29 or 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    gm = 0
+    for v in sal_a:
+        if gd <= v:
+            break
+        gd -= v
+        gm += 1
+    return datetime(gy, gm, gd)
+
+
 class BotStates(StatesGroup):
     waiting_for_file_upload = State()
     waiting_for_file_name = State()
@@ -86,7 +113,6 @@ class BotStates(StatesGroup):
 
 user_temp_storage = {}
 
-# Keyboard-ha
 main_menu_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="🗂️ مدیریت فایل‌ها"), KeyboardButton(text="🔗 خدمات لینک")],
@@ -513,9 +539,7 @@ async def receive_link_expire_date(message: Message, state: FSMContext) -> None:
             raise ValueError("Format error")
         j_year, j_month, j_day = int(parts[0]), int(parts[1]), int(parts[2])
         
-        # Tabdil tarikh shamsi be miladi baraye Kutt API
-        jalali_date = jdatetime.date(j_year, j_month, j_day)
-        gregorian_date = jalali_date.togregorian()
+        gregorian_date = jalali_to_gregorian(j_year, j_month, j_day)
         iso_expire = gregorian_date.strftime("%Y-%m-%dT23:59:59.000Z")
         
         user_temp_storage[user_id]["expire_at"] = iso_expire
