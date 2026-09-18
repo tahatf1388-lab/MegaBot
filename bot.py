@@ -186,6 +186,16 @@ async def link_services_menu(message: Message, state: FSMContext) -> None:
     )
 
 
+# هندلر جدید برای دکمه آپلود فایل (اصلاح مشکل کلیک روی دکمه)
+@router.message(F.text == "📁 آپلود فایل و دریافت لینک")
+async def upload_file_menu_prompt(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    await message.answer(
+        "📥 لطفاً فایل خود (سند، ویدیو، صوت یا تصویر) را بفرستید تا آن را ذخیره کنم و لینک اختصاصی‌اش را به شما تحویل دهم: 👇",
+        reply_markup=back_keyboard
+    )
+
+
 @router.message(F.text == "➕ افزودن لینک جدید")
 async def add_new_link_prompt(message: Message, state: FSMContext) -> None:
     await state.set_state(UploadStates.waiting_for_link_url)
