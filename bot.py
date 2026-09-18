@@ -5,6 +5,8 @@ import os
 import aiohttp
 import psycopg2
 from urllib.parse import urlparse, urlunparse
+from datetime import datetime
+import jdatetime
 
 from aiohttp import web
 from aiogram import Bot, Dispatcher, F, Router
@@ -23,7 +25,7 @@ from aiogram.types import (
 TOKEN = "8844658209:AAH41cGWIdMiSLQq8PO5VNU_qds7vWJpmmE"
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-#Etelaat-e Kutt Service
+# Etelaat-e Kutt Service
 KUTT_API_URL = "https://kutt-production-0880.up.railway.app/api/v2/links"
 KUTT_API_KEY = "OBwH3VujRdD29sakT7dgJ_OqEGxWz8KZ2mWw5EkJ"
 
@@ -77,6 +79,10 @@ class BotStates(StatesGroup):
     waiting_for_file_name = State()
     waiting_for_link_url = State()
     waiting_for_link_name = State()
+    waiting_for_link_password_choice = State()
+    waiting_for_link_password = State()
+    waiting_for_link_expire_choice = State()
+    waiting_for_link_expire_date = State()
 
 user_temp_storage = {}
 
@@ -108,6 +114,22 @@ link_services_keyboard = ReplyKeyboardMarkup(
 
 back_keyboard = ReplyKeyboardMarkup(
     keyboard=[
+        [KeyboardButton(text="🔙 بازگشت")]
+    ],
+    resize_keyboard=True
+)
+
+password_choice_keyboard = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="🔒 بله، گذاشتن رمز عبور"), KeyboardButton(text="⏭️ رد کردن")],
+        [KeyboardButton(text="🔙 بازگشت")]
+    ],
+    resize_keyboard=True
+)
+
+expire_choice_keyboard = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="⏳ بله، تعیین تاریخ انقضا"), KeyboardButton(text="⏭️ رد کردن")],
         [KeyboardButton(text="🔙 بازگشت")]
     ],
     resize_keyboard=True
@@ -355,7 +377,7 @@ async def file_callbacks(callback_query: CallbackQuery):
             pass
 
 
-# ================= Bakhsh-e Khadamat Link (Estefade az Kutt API) =================
+# ================= Bakhsh-e Khadamat Link (Kutt API + Password + Expiration) =================
 
 @router.message(F.text == "➕ افزودن لینک جدید")
 async def add_link_prompt(message: Message, state: FSMContext) -> None:
@@ -396,27 +418,147 @@ async def receive_link_name(message: Message, state: FSMContext) -> None:
 
     if user_id not in user_temp_storage:
         await state.clear()
+        await message.answer("⚠️ اطلاعات منقضی شد. لطفاً دوباره تلاش کنید.", reply_markup=link_services_keyboard)
+        return
+
+    user_temp_storage[user_id]["link_name"] = link_name
+    await state.set_state(BotStates.waiting_for_link_password_choice)
+    await message.answer("🔒 آیا می‌خواهید برای این لینک **رمز عبور** تعیین کنید؟", reply_markup=password_choice_keyboard)
+
+
+@router.message(BotStates.waiting_for_link_password_choice, F.text)
+async def receive_password_choice(message: Message, state: FSMContext) -> None:
+    user_id = message.from_user.id
+    text = message.text.strip()
+
+    if text == "🔙 بازگشت":
+        await state.clear()
+        user_temp_storage.pop(user_id, None)
+        await message.answer("🔙 به بخش خدمات لینک برگشتید: 👇", reply_markup=link_services_keyboard)
+        return
+
+    if text == "⏭️ رد کردن":
+        user_temp_storage[user_id]["password"] = None
+        await state.set_state(BotStates.waiting_for_link_expire_choice)
+        await message.answer("⏳ آیا می‌خواهید برای این لینک **تاریخ انقضا** تعیین کنید؟", reply_markup=expire_choice_keyboard)
+    elif text == "🔒 بله، گذاشتن رمز عبور":
+        await state.set_state(BotStates.waiting_for_link_password)
+        await message.answer("🔑 لطفاً رمز عبور دلخواه خود را برای لینک وارد کنید:", reply_markup=back_keyboard)
+    else:
+        await message.answer("⚠️ لطفاً یکی از گزینه‌های کیبورد را انتخاب کنید:", reply_markup=password_choice_keyboard)
+
+
+@router.message(BotStates.waiting_for_link_password, F.text)
+async def receive_link_password(message: Message, state: FSMContext) -> None:
+    user_id = message.from_user.id
+    password = message.text.strip()
+
+    if password == "🔙 بازگشت":
+        await state.set_state(BotStates.waiting_for_link_password_choice)
+        await message.answer("🔒 آیا می‌خواهید برای این لینک **رمز عبور** تعیین کنید؟", reply_markup=password_choice_keyboard)
+        return
+
+    if user_id not in user_temp_storage:
+        await state.clear()
+        await message.answer("⚠️ اطلاعات منقضی شد. لطفاً دوباره تلاش کنید.", reply_markup=link_services_keyboard)
+        return
+
+    user_temp_storage[user_id]["password"] = password
+    await state.set_state(BotStates.waiting_for_link_expire_choice)
+    await message.answer("⏳ رمز ثبت شد. آیا می‌خواهید برای این لینک **تاریخ انقضا** تعیین کنید؟", reply_markup=expire_choice_keyboard)
+
+
+@router.message(BotStates.waiting_for_link_expire_choice, F.text)
+async def receive_expire_choice(message: Message, state: FSMContext) -> None:
+    user_id = message.from_user.id
+    text = message.text.strip()
+
+    if text == "🔙 بازگشت":
+        await state.set_state(BotStates.waiting_for_link_password_choice)
+        await message.answer("🔒 آیا می‌خواهید برای این لینک **رمز عبور** تعیین کنید؟", reply_markup=password_choice_keyboard)
+        return
+
+    if text == "⏭️ رد کردن":
+        user_temp_storage[user_id]["expire_at"] = None
+        await finalize_and_create_link(message, state)
+    elif text == "⏳ بله، تعیین تاریخ انقضا":
+        await state.set_state(BotStates.waiting_for_link_expire_date)
+        await message.answer(
+            "📅 لطفاً تاریخ انقضا را به صورت شمسی و در فرمت `سال/ماه/روز` وارد کنید (مثلا: `1405/07/15`): 👇",
+            reply_markup=back_keyboard,
+            parse_mode="Markdown"
+        )
+    else:
+        await message.answer("⚠️ لطفاً یکی از گزینه‌های کیبورد را انتخاب کنید:", reply_markup=expire_choice_keyboard)
+
+
+@router.message(BotStates.waiting_for_link_expire_date, F.text)
+async def receive_link_expire_date(message: Message, state: FSMContext) -> None:
+    user_id = message.from_user.id
+    date_text = message.text.strip()
+
+    if date_text == "🔙 بازگشت":
+        await state.set_state(BotStates.waiting_for_link_expire_choice)
+        await message.answer("⏳ آیا می‌خواهید برای این لینک **تاریخ انقضا** تعیین کنید؟", reply_markup=expire_choice_keyboard)
+        return
+
+    if user_id not in user_temp_storage:
+        await state.clear()
+        await message.answer("⚠️ اطلاعات منقضی شد. لطفاً دوباره تلاش کنید.", reply_markup=link_services_keyboard)
+        return
+
+    try:
+        parts = date_text.split('/')
+        if len(parts) != 3:
+            raise ValueError("Format error")
+        j_year, j_month, j_day = int(parts[0]), int(parts[1]), int(parts[2])
+        
+        # Tabdil tarikh shamsi be miladi baraye Kutt API
+        jalali_date = jdatetime.date(j_year, j_month, j_day)
+        gregorian_date = jalali_date.togregorian()
+        iso_expire = gregorian_date.strftime("%Y-%m-%dT23:59:59.000Z")
+        
+        user_temp_storage[user_id]["expire_at"] = iso_expire
+        await finalize_and_create_link(message, state)
+    except Exception:
+        await message.answer("⚠️ فرمت تاریخ نامعتبر است! لطفاً تاریخ را به صورت صحیح و شمسی مانند `1405/07/15` وارد کنید:", reply_markup=back_keyboard)
+
+
+async def finalize_and_create_link(message: Message, state: FSMContext) -> None:
+    user_id = message.from_user.id
+    data = user_temp_storage.pop(user_id, None)
+
+    if not data:
+        await state.clear()
         await message.answer("⚠️ خطا رخ داد. لطفاً دوباره تلاش کنید.", reply_markup=link_services_keyboard)
         return
 
-    long_url = user_temp_storage.pop(user_id)["long_url"]
+    long_url = data["long_url"]
+    link_name = data["link_name"]
+    password = data.get("password")
+    expire_at = data.get("expire_at")
 
     short_url = None
     error_details = ""
+    
+    payload = {
+        "target": long_url
+    }
+    if password:
+        payload["password"] = password
+    if expire_at:
+        payload["expire_at"] = expire_at
+
     async with aiohttp.ClientSession() as session:
         headers = {
             "X-API-Key": KUTT_API_KEY,
             "Content-Type": "application/json"
         }
-        payload = {
-            "target": long_url
-        }
         try:
             async with session.post(KUTT_API_URL, json=payload, headers=headers) as resp:
-                if resp.status == 200 or resp.status == 201:
-                    data = await resp.json()
-                    short_url = data.get("link") or data.get("full_url")
-                    # اصلاح دامنه اشتباه Kutt به دامنه صحیح ریلوی
+                if resp.status in (200, 201):
+                    resp_data = await resp.json()
+                    short_url = resp_data.get("link") or resp_data.get("full_url")
                     if short_url:
                         parsed_short = urlparse(short_url)
                         parsed_short = parsed_short._replace(netloc="kutt-production-0880.up.railway.app", scheme="https")
@@ -449,8 +591,10 @@ async def receive_link_name(message: Message, state: FSMContext) -> None:
 
     await state.clear()
     await message.answer(
-        f"🎉 لینک شما با موفقیت کوتاه شد! ✅\n\n"
+        f"🎉 لینک شما با موفقیت کوتاه و تنظیم شد! ✅\n\n"
         f"📌 نام: {link_name}\n"
+        f"🔒 رمز عبور: {'دارد ✅' if password else 'ندارد ❌'}\n"
+        f"⏳ تاریخ انقضا: {'تنظیم شد ✅' if expire_at else 'ندارد ❌'}\n\n"
         f"🔗 لینک کوتاه شده:\n"
         f"{short_url}",
         reply_markup=link_services_keyboard
