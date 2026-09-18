@@ -182,9 +182,11 @@ async def link_services_menu(message: Message, state: FSMContext) -> None:
 async def profile_handler(message: Message, state: FSMContext) -> None:
     await state.clear()
     await message.answer(
-        f"👤 **اطلاعات حساب کاربری شما:**\n\n"
+        f"📊 اطلاعات حساب کاربری شما: 👤\n\n"
         f"🆔 شناسه کاربری: `{message.from_user.id}`\n"
-        f" نام: {message.from_user.first_name}",
+        f" نام: {message.from_user.first_name}\n\n"
+        f"✨ وضعیت اشتراک: عادی 🌟\n"
+        f"🎁 موجودی ترافیک: رایگان 🚀",
         parse_mode="Markdown",
         reply_markup=main_menu_keyboard
     )
