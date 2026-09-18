@@ -216,6 +216,11 @@ async def cancel_file_upload_back(message: Message, state: FSMContext) -> None:
     await state.clear()
     await message.answer("🔙 به بخش مدیریت فایل‌ها برگشتید: 👇", reply_markup=file_management_keyboard)
 
+@router.message(BotStates.waiting_for_file_upload, F.text == "🔙 بازگشت")
+async def cancel_file_upload_back(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    await message.answer("🔙 به بخش مدیریت فایل‌ها برگشتید: 👇", reply_markup=file_management_keyboard)
+
 
 @router.message(BotStates.waiting_for_file_upload, F.document | F.video | F.audio | F.photo)
 async def receive_file(message: Message, state: FSMContext) -> None:
