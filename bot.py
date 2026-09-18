@@ -108,6 +108,7 @@ back_keyboard = ReplyKeyboardMarkup(
 
 
 async def shorten_url_b2n(long_url: str) -> str:
+    """کوتاه‌کننده لینک با استفاده از API سایت b2n.ir"""
     api_url = f"https://b2n.ir/api.php?url={long_url}"
     try:
         timeout = aiohttp.ClientTimeout(total=7)
@@ -155,109 +156,16 @@ async def command_start_handler(message: Message, state: FSMContext) -> None:
         else:
             await message.answer("⚠️ متأسفانه فایل مورد نظر پیدا نشد یا منقضی شده است. ❌")
 
-        await message.answer("🏠 به منوی اصلی برگشتید: 👇", reply_markup=main_menu_keyboard)
+        await message.answer(
+            "🏠 به منوی اصلی برگشتید: 👇",
+            reply_markup=main_menu_keyboard
+        )
         return
 
     await message.answer(
         f"سلام {message.from_user.first_name}! 👋 به ربات مگابات خوش آمدید. 🤖\nلطفاً یکی از گزینه‌های زیر را انتخاب کنید: 👇",
         reply_markup=main_menu_keyboard
     )
-
-
-# --- بخش حیاتی: انتقال هندلرهای آپلود فایل به بالای لیست برای جلوگیری از تداخل ---
-
-@router.message(F.text == "📁 آپلود فایل و دریافت لینک")
-async def upload_file_prompt(message: Message, state: FSMContext) -> None:
-    await state.clear()
-    await message.answer(
-        "📥 لطفاً فایل خود (سند، ویدیو، صوت یا تصویر) را بفرستید تا آن را ذخیره کنم و لینک اختصاصی‌اش را به شما تحویل دهم: 👇",
-        reply_markup=back_keyboard
-    )
-
-
-@router.message(F.document | F.video | F.audio | F.photo)
-async def handle_user_files(message: Message, state: FSMContext) -> None:
-    current_state = await state.get_state()
-    user_id = message.from_user.id
-
-    if current_state != UploadStates.waiting_for_file_name.state:
-        file_id = None
-        file_type = None
-
-        if message.document:
-            file_id = message.document.file_id
-            file_type = "document"
-        elif message.video:
-            file_id = message.video.file_id
-            file_type = "video"
-        elif message.audio:
-            file_id = message.audio.file_id
-            file_type = "audio"
-        elif message.photo:
-            file_id = message.photo[-1].file_id
-            file_type = "photo"
-
-        if file_id:
-            user_temp_link[f"file_{user_id}"] = {
-                "file_id": file_id,
-                "file_type": file_type
-            }
-            await state.set_state(UploadStates.waiting_for_file_name)
-            await message.answer(
-                "✍️ فایل شما دریافت شد.\nحالا لطفاً یک **نام دلخواه** برای این فایل وارد کنید (تا در لیست فایل‌های شما ذخیره شود): 👇",
-                reply_markup=back_keyboard
-            )
-        return
-
-
-@router.message(UploadStates.waiting_for_file_name, F.text)
-async def process_file_name_step(message: Message, state: FSMContext) -> None:
-    user_id = message.from_user.id
-    text = message.text.strip()
-
-    if text == "🔙 بازگشت":
-        await state.clear()
-        user_temp_link.pop(f"file_{user_id}", None)
-        await message.answer("🔙 به بخش مدیریت فایل‌ها برگشتید: 👇", reply_markup=file_management_keyboard)
-        return
-
-    file_key_dict_key = f"file_{user_id}"
-    if file_key_dict_key not in user_temp_link:
-        await state.clear()
-        await message.answer("⚠️ اطلاعات فایل منقضی شد. لطفاً دوباره فایل را ارسال کنید.", reply_markup=file_management_keyboard)
-        return
-
-    file_data = user_temp_link.pop(file_key_dict_key)
-    file_id = file_data["file_id"]
-    file_type = file_data["file_type"]
-    file_name = text
-
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM files")
-    count = cursor.fetchone()[0]
-    file_key = f"f_{user_id}_{count + 1}"
-
-    cursor.execute("""
-        INSERT INTO files (file_key, user_id, file_id, file_type, file_name, deleted)
-        VALUES (%s, %s, %s, %s, %s, 0)
-    """, (file_key, user_id, file_id, file_type, file_name))
-    conn.commit()
-    cursor.close()
-    conn.close()
-
-    bot_info = await message.bot.get_me()
-    share_link = f"https://t.me/{bot_info.username}?start=file_{file_key}"
-
-    await state.clear()
-    await message.answer(
-        f"🎉 فایل شما با نام **{file_name}** ثبت شد! ✅\n\n"
-        f"🔗 لینک اختصاصی برای اشتراک‌گذاری:\n`{share_link}`",
-        parse_mode="Markdown",
-        reply_markup=file_management_keyboard
-    )
-
-# -------------------------------------------------------------
 
 
 @router.message(F.text == "🗂️ مدیریت فایل‌ها")
@@ -539,24 +447,96 @@ async def process_file_callback(callback_query: CallbackQuery):
             pass
 
 
+@router.message(F.document | F.video | F.audio | F.photo)
+async def handle_user_files(message: Message, state: FSMContext) -> None:
+    current_state = await state.get_state()
+    user_id = message.from_user.id
+
+    if current_state != UploadStates.waiting_for_file_name.state:
+        file_id = None
+        file_type = None
+
+        if message.document:
+            file_id = message.document.file_id
+            file_type = "document"
+        elif message.video:
+            file_id = message.video.file_id
+            file_type = "video"
+        elif message.audio:
+            file_id = message.audio.file_id
+            file_type = "audio"
+        elif message.photo:
+            file_id = message.photo[-1].file_id
+            file_type = "photo"
+
+        if file_id:
+            user_temp_link[f"file_{user_id}"] = {
+                "file_id": file_id,
+                "file_type": file_type
+            }
+            await state.set_state(UploadStates.waiting_for_file_name)
+            await message.answer(
+                "✍️ فایل شما دریافت شد.\nحالا لطفاً یک **نام دلخواه** برای این فایل وارد کنید (تا در لیست فایل‌های شما ذخیره شود): 👇",
+                reply_markup=back_keyboard
+            )
+        return
+
+
+@router.message(UploadStates.waiting_for_file_name, F.text)
+async def process_file_name_step(message: Message, state: FSMContext) -> None:
+    user_id = message.from_user.id
+    text = message.text.strip()
+
+    if text == "🔙 بازگشت":
+        await state.clear()
+        user_temp_link.pop(f"file_{user_id}", None)
+        await message.answer("🔙 به بخش مدیریت فایل‌ها برگشتید: 👇", reply_markup=file_management_keyboard)
+        return
+
+    file_key_dict_key = f"file_{user_id}"
+    if file_key_dict_key not in user_temp_link:
+        await state.clear()
+        await message.answer("⚠️ اطلاعات فایل منقضی شد. لطفاً دوباره فایل را ارسال کنید.", reply_markup=file_management_keyboard)
+        return
+
+    file_data = user_temp_link.pop(file_key_dict_key)
+    file_id = file_data["file_id"]
+    file_type = file_data["file_type"]
+    file_name = text
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM files")
+    count = cursor.fetchone()[0]
+    file_key = f"f_{user_id}_{count + 1}"
+
+    cursor.execute("""
+        INSERT INTO files (file_key, user_id, file_id, file_type, file_name, deleted)
+        VALUES (%s, %s, %s, %s, %s, 0)
+    """, (file_key, user_id, file_id, file_type, file_name))
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+    bot_info = await message.bot.get_me()
+    share_link = f"https://t.me/{bot_info.username}?start=file_{file_key}"
+
+    await state.clear()
+    await message.answer(
+        f"🎉 فایل شما با نام **{file_name}** ثبت شد! ✅\n\n"
+        f"🔗 لینک اختصاصی برای اشتراک‌گذاری:\n`{share_link}`",
+        parse_mode="Markdown",
+        reply_markup=file_management_keyboard
+    )
+
+
 @router.message(F.text == "🔙 بازگشت به منوی اصلی")
 async def back_to_main(message: Message, state: FSMContext) -> None:
     await state.clear()
-    await message.answer("🏠 به منوی اصلی برگشتید: 👇", reply_markup=main_menu_keyboard)
-
-
-@router.message(F.text)
-async def handle_unhandled_text(message: Message, state: FSMContext) -> None:
-    text = message.text.strip()
-    if text == "🔙 بازگشت":
-        await state.clear()
-        await message.answer("🔙 به منوی اصلی برگشتید: 👇", reply_markup=main_menu_keyboard)
-    else:
-        await state.clear()
-        await message.answer(
-            "لطفاً از دکمه‌های منوی زیر استفاده کنید: 👇",
-            reply_markup=main_menu_keyboard
-        )
+    await message.answer(
+        "🏠 به منوی اصلی برگشتید: 👇",
+        reply_markup=main_menu_keyboard
+    )
 
 
 async def main() -> None:
