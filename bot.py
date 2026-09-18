@@ -6,6 +6,7 @@ import aiohttp
 import psycopg2
 from urllib.parse import urlparse
 
+from aiohttp import web
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
@@ -22,8 +23,9 @@ from aiogram.types import (
 TOKEN = "8844658209:AAH41cGWIdMiSLQq8PO5VNU_qds7vWJpmmE"
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# کلید API مربوط به سرویس Kutt (از سایت kutt.it تهیه کنید)
-KUTT_API_KEY = "YOUR_KUTT_API_KEY"
+# دریافت دامنه عمومی از متغیرهای محیطی Railway (مثل your-app.up.railway.app)
+# اگر روی لوکال تست می‌کنی، پیش‌فرض روی پورت محلی می‌رود
+RAILWAY_STATIC_URL = os.getenv("RAILWAY_STATIC_URL", "localhost:8080")
 
 router = Router()
 
@@ -110,30 +112,6 @@ back_keyboard = ReplyKeyboardMarkup(
     ],
     resize_keyboard=True
 )
-
-
-async def shorten_url_kutt(long_url: str) -> str:
-    api_url = "https://api.kutt.it/v2/links"
-    headers = {
-        "X-API-KEY": KUTT_API_KEY,
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "target": long_url
-    }
-    
-    try:
-        timeout = aiohttp.ClientTimeout(total=7)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(api_url, json=payload, headers=headers) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    short_url = data.get("link")
-                    if short_url:
-                        return short_url
-    except Exception as e:
-        logging.warning(f"Kutt API failed: {e}")
-    return None
 
 
 @router.message(CommandStart())
@@ -377,7 +355,7 @@ async def file_callbacks(callback_query: CallbackQuery):
             pass
 
 
-# ================= بخش خدمات لینک =================
+# ================= بخش خدمات لینک (جهانی و وب‌پایه) =================
 
 @router.message(F.text == "➕ افزودن لینک جدید")
 async def add_link_prompt(message: Message, state: FSMContext) -> None:
@@ -422,30 +400,25 @@ async def receive_link_name(message: Message, state: FSMContext) -> None:
         return
 
     long_url = user_temp_storage.pop(user_id)["long_url"]
-    waiting_msg = await message.answer("⏳ در حال کوتاه‌سازی لینک...")
-
-    short_result = await shorten_url_kutt(long_url)
-
-    try:
-        await waiting_msg.delete()
-    except Exception:
-        pass
-
-    if not short_result:
-        await message.answer("⚠️ خطا در کوتاه‌سازی لینک. لطفاً بعداً تلاش کنید.", reply_markup=link_services_keyboard)
-        await state.clear()
-        return
 
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT COUNT(*) FROM links")
     count = cursor.fetchone()[0]
+    # تولید یک شناسه کوتاه برای لینک
+    short_code = f"s{count + 1}"
     link_id = f"link_{user_id}_{count + 1}"
+    
+    # ساخت لینک کوتاه جهانی بر اساس آدرس دامنه هاست
+    base_domain = RAILWAY_STATIC_URL
+    if not base_domain.startswith("http"):
+        base_domain = f"https://{base_domain}"
+    short_url = f"{base_domain}/{short_code}"
 
     cursor.execute("""
         INSERT INTO links (link_id, user_id, link_name, long_url, short_url, deleted)
         VALUES (%s, %s, %s, %s, %s, 0)
-    """, (link_id, user_id, link_name, long_url, short_result))
+    """, (short_code, user_id, link_name, long_url, short_url))
     conn.commit()
     cursor.close()
     conn.close()
@@ -454,8 +427,8 @@ async def receive_link_name(message: Message, state: FSMContext) -> None:
     await message.answer(
         f"🎉 لینک شما با موفقیت کوتاه شد! ✅\n\n"
         f"📌 نام: {link_name}\n"
-        f"🔗 لینک کوتاه شده:\n"
-        f"{short_result}",
+        f"🔗 لینک کوتاه جهانی:\n"
+        f"{short_url}",
         reply_markup=link_services_keyboard
     )
 
@@ -532,10 +505,45 @@ async def link_callbacks(callback_query: CallbackQuery):
             pass
 
 
+# ================= بخش وب‌سرور داخلی برای ریدایرکت لینک‌ها =================
+
+async def handle_redirect(request):
+    short_code = request.match_info.get("short_code")
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT long_url, deleted FROM links WHERE link_id = %s", (short_code,))
+    row = cursor.fetchone()
+    cursor.close()
+    conn.close()
+
+    if row:
+        long_url, deleted = row
+        if deleted == 0:
+            raise web.HTTPFound(long_url)
+            
+    return web.Response(text="404 - لینک مورد نظر پیدا نشد یا حذف شده است.", status=404)
+
+
+async def run_web_server():
+    app = web.Application()
+    app.router.add_get("/{short_code}", handle_redirect)
+    
+    port = int(os.environ.get("PORT", 8080))
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logging.info(f"Web server started on port {port}")
+
+
 async def main() -> None:
     bot = Bot(token=TOKEN)
     dp = Dispatcher()
     dp.include_router(router)
+    
+    # راه‌اندازی همزمان وب‌سرور و بات تلگرام
+    await run_web_server()
     
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
