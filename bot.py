@@ -401,8 +401,8 @@ async def receive_link_name(message: Message, state: FSMContext) -> None:
 
     long_url = user_temp_storage.pop(user_id)["long_url"]
 
-    # Ersal darkhast be API Kutt baraye kutah kardan link
     short_url = None
+    error_details = ""
     async with aiohttp.ClientSession() as session:
         headers = {
             "X-API-Key": KUTT_API_KEY,
@@ -413,18 +413,19 @@ async def receive_link_name(message: Message, state: FSMContext) -> None:
         }
         try:
             async with session.post(KUTT_API_URL, json=payload, headers=headers) as resp:
-                if resp.status == 200:
+                if resp.status == 200 or resp.status == 201:
                     data = await resp.json()
-                    short_url = data.get("link")
+                    short_url = data.get("link") or data.get("full_url")
                 else:
-                    err_text = await resp.text()
-                    logging.error(f"Kutt API Error: {resp.status} - {err_text}")
+                    error_details = await resp.text()
+                    logging.error(f"Kutt API Error: {resp.status} - {error_details}")
         except Exception as e:
+            error_details = str(e)
             logging.error(f"Exception connecting to Kutt API: {e}")
 
     if not short_url:
         await state.clear()
-        await message.answer("⚠️ خطا در ارتباط با سرویس کوتاه کننده لینک. لطفاً دوباره تلاش کنید.", reply_markup=link_services_keyboard)
+        await message.answer(f"⚠️ خطا در ارتباط با Kutt:\n`{error_details[:200]}`", parse_mode="Markdown", reply_markup=link_services_keyboard)
         return
 
     conn = get_db_connection()
@@ -432,7 +433,6 @@ async def receive_link_name(message: Message, state: FSMContext) -> None:
     cursor.execute("SELECT COUNT(*) FROM links")
     count = cursor.fetchone()[0]
     link_id = f"link_{user_id}_{count + 1}"
-    short_code = short_url.split("/")[-1]
 
     cursor.execute("""
         INSERT INTO links (link_id, user_id, link_name, long_url, short_url, deleted)
