@@ -273,11 +273,11 @@ async def receive_file_name(message: Message, state: FSMContext) -> None:
     share_link = f"https://t.me/{bot_info.username}?start=file_{file_key}"
 
     await state.clear()
+    # اصلاح شده: ارسال لینک به صورت متن معمولی و خوانا
     await message.answer(
-        f"🎉 فایل شما با نام <b>{file_name}</b> ثبت شد! ✅\n\n"
+        f"🎉 فایل شما با نام {file_name} ثبت شد! ✅\n\n"
         f"🔗 لینک اختصاصی:\n"
-        f"<a href='{share_link}'>دانلود و دریافت فایل</a>",
-        parse_mode="HTML",
+        f"{share_link}",
         reply_markup=file_management_keyboard
     )
 
@@ -336,10 +336,11 @@ async def file_callbacks(callback_query: CallbackQuery):
         
         bot_info = await callback_query.bot.get_me()
         share_link = f"https://t.me/{bot_info.username}?start=file_{file_key}"
+        
+        # اصلاح شده: ارسال لینک فایل‌های من به صورت متن معمولی
         await callback_query.message.answer(
-            f"🔗 لینک اختصاصی فایل (<b>{file_name}</b>):\n\n"
-            f"<a href='{share_link}'>کلیک کنید برای دانلود فایل</a>",
-            parse_mode="HTML"
+            f"🔗 لینک اختصاصی فایل ({file_name}):\n\n"
+            f"{share_link}"
         )
         await callback_query.answer("✅ لینک ارسال شد.")
 
@@ -430,12 +431,12 @@ async def receive_link_name(message: Message, state: FSMContext) -> None:
     conn.close()
 
     await state.clear()
+    # اصلاح شده: ارسال لینک کوتاه شده به صورت متن معمولی
     await message.answer(
         f"🎉 لینک شما با موفقیت کوتاه شد! ✅\n\n"
-        f"📌 نام: <b>{link_name}</b>\n"
+        f"📌 نام: {link_name}\n"
         f"🔗 لینک کوتاه شده:\n"
-        f"<a href='{short_result}'>{short_result}</a>",
-        parse_mode="HTML",
+        f"{short_result}",
         reply_markup=link_services_keyboard
     )
 
@@ -492,11 +493,11 @@ async def link_callbacks(callback_query: CallbackQuery):
             await callback_query.answer("⚠️ این لینک حذف شده است.", show_alert=True)
             return
         
+        # اصلاح شده: ارسال اطلاعات لینک‌های من به صورت متن ساده و عادی
         await callback_query.message.answer(
-            f"📊 <b>اطلاعات لینک ({link_name}):</b>\n\n"
-            f"🌐 لینک اصلی:\n<a href='{long_url}'>{long_url}</a>\n\n"
-            f"🔗 لینک کوتاه:\n<a href='{short_url}'>{short_url}</a>",
-            parse_mode="HTML"
+            f"📊 اطلاعات لینک ({link_name}):\n\n"
+            f"🌐 لینک اصلی:\n{long_url}\n\n"
+            f"🔗 لینک کوتاه:\n{short_result if 'short_result' in locals() else short_url}"
         )
         await callback_query.answer("✅ اطلاعات ارسال شد.")
 
