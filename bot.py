@@ -68,7 +68,8 @@ def init_db():
 init_db()
 
 class UploadStates(StatesGroup):
-    waiting_for_file_name = State()
+    waiting_for_file_upload = State()  # حالت انتظار برای دریافت فایل
+    waiting_for_file_name = State()   # حالت انتظار برای نام‌گذاری فایل
     waiting_for_link_url = State()
     waiting_for_link_name = State()
 
@@ -186,10 +187,10 @@ async def link_services_menu(message: Message, state: FSMContext) -> None:
     )
 
 
-# هندلر جدید برای دکمه آپلود فایل (اصلاح مشکل کلیک روی دکمه)
+# هندلر فعال‌سازی حالت آپلود فایل پس از کلیک روی دکمه مربوطه
 @router.message(F.text == "📁 آپلود فایل و دریافت لینک")
 async def upload_file_menu_prompt(message: Message, state: FSMContext) -> None:
-    await state.clear()
+    await state.set_state(UploadStates.waiting_for_file_upload)
     await message.answer(
         "📥 لطفاً فایل خود (سند، ویدیو، صوت یا تصویر) را بفرستید تا آن را ذخیره کنم و لینک اختصاصی‌اش را به شما تحویل دهم: 👇",
         reply_markup=back_keyboard
@@ -431,7 +432,7 @@ async def process_file_callback(callback_query: CallbackQuery):
         cursor.close()
         conn.close()
         if deleted == 1:
-            await callback_query.answer("⚠️ این لینک حذف شده است. ❌", show_alert=True)
+            await callback_query.answer("⚠️ این فایل حذف شده است. ❌", show_alert=True)
             return
         
         bot_info = await callback_query.bot.get_me()
@@ -452,44 +453,48 @@ async def process_file_callback(callback_query: CallbackQuery):
         
         await callback_query.answer("🗑️ فایل با موفقیت حذف شد. ✅", show_alert=True)
         try:
-            await callback_query.message.edit_text("🗑️ این لینک از لیست شما حذف شد.")
+            await callback_query.message.edit_text("🗑️ این فایل از لیست شما حذف شد.")
         except Exception:
             pass
 
 
-@router.message(F.document | F.video | F.audio | F.photo)
+# مدیریت دکمه بازگشت در هنگام انتظار برای آپلود فایل
+@router.message(F.text == "🔙 بازگشت", UploadStates.waiting_for_file_upload)
+async def cancel_file_upload(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    await message.answer("🔙 به بخش مدیریت فایل‌ها برگشتید: 👇", reply_markup=file_management_keyboard)
+
+
+# دریافت فایل فقط در زمانی که کاربر در وضعیت آپلود فایل قرار دارد
+@router.message(UploadStates.waiting_for_file_upload, F.document | F.video | F.audio | F.photo)
 async def handle_user_files(message: Message, state: FSMContext) -> None:
-    current_state = await state.get_state()
     user_id = message.from_user.id
+    file_id = None
+    file_type = None
 
-    if current_state != UploadStates.waiting_for_file_name.state:
-        file_id = None
-        file_type = None
+    if message.document:
+        file_id = message.document.file_id
+        file_type = "document"
+    elif message.video:
+        file_id = message.video.file_id
+        file_type = "video"
+    elif message.audio:
+        file_id = message.audio.file_id
+        file_type = "audio"
+    elif message.photo:
+        file_id = message.photo[-1].file_id
+        file_type = "photo"
 
-        if message.document:
-            file_id = message.document.file_id
-            file_type = "document"
-        elif message.video:
-            file_id = message.video.file_id
-            file_type = "video"
-        elif message.audio:
-            file_id = message.audio.file_id
-            file_type = "audio"
-        elif message.photo:
-            file_id = message.photo[-1].file_id
-            file_type = "photo"
-
-        if file_id:
-            user_temp_link[f"file_{user_id}"] = {
-                "file_id": file_id,
-                "file_type": file_type
-            }
-            await state.set_state(UploadStates.waiting_for_file_name)
-            await message.answer(
-                "✍️ فایل شما دریافت شد.\nحالا لطفاً یک **نام دلخواه** برای این فایل وارد کنید (تا در لیست فایل‌های شما ذخیره شود): 👇",
-                reply_markup=back_keyboard
-            )
-        return
+    if file_id:
+        user_temp_link[f"file_{user_id}"] = {
+            "file_id": file_id,
+            "file_type": file_type
+        }
+        await state.set_state(UploadStates.waiting_for_file_name)
+        await message.answer(
+            "✍️ فایل شما دریافت شد.\nحالا لطفاً یک **نام دلخواه** برای این فایل وارد کنید (تا در لیست فایل‌های شما ذخیره شود): 👇",
+            reply_markup=back_keyboard
+        )
 
 
 @router.message(UploadStates.waiting_for_file_name, F.text)
