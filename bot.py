@@ -7,7 +7,6 @@ import psycopg2
 from urllib.parse import urlparse, urlunparse
 from datetime import datetime
 
-from aiohttp import web
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
@@ -56,8 +55,6 @@ def init_db():
             deleted INTEGER DEFAULT 0
         )
     """)
-    
-    # Ezafe kardan sotonhaye amari agar ghablan sakhte shode bashand
     cursor.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS views INTEGER DEFAULT 0;")
     cursor.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS forwards INTEGER DEFAULT 0;")
     
@@ -69,12 +66,14 @@ def init_db():
             link_name TEXT,
             long_url TEXT,
             short_url TEXT,
+            kutt_id TEXT,
             password TEXT,
             expire_date TEXT,
             expire_gregorian TIMESTAMP,
             deleted INTEGER DEFAULT 0
         )
     """)
+    cursor.execute("ALTER TABLE links ADD COLUMN IF NOT EXISTS kutt_id TEXT;")
     cursor.execute("ALTER TABLE links ADD COLUMN IF NOT EXISTS password TEXT;")
     cursor.execute("ALTER TABLE links ADD COLUMN IF NOT EXISTS expire_date TEXT;")
     cursor.execute("ALTER TABLE links ADD COLUMN IF NOT EXISTS expire_gregorian TIMESTAMP;")
@@ -194,7 +193,6 @@ async def command_start_handler(message: Message, state: FSMContext) -> None:
                 conn.close()
                 await message.answer("⚠️ متأسفانه این فایل توسط صاحب آن حذف شده است. ❌")
             else:
-                # Ezafe kardan yek vahed be amare bazdid (views)
                 cursor.execute("UPDATE files SET views = views + 1 WHERE file_key = %s", (file_key,))
                 conn.commit()
                 cursor.close()
@@ -392,7 +390,6 @@ async def file_callbacks(callback_query: CallbackQuery):
             await callback_query.answer("⚠️ این فایل حذف شده است.", show_alert=True)
             return
         
-        # Namayesh etelaat va amar file
         await callback_query.message.answer(
             f"📁 فایل شما ({file_name}): 👇\n\n"
             f"📊 آمار فایل:\n"
@@ -401,15 +398,13 @@ async def file_callbacks(callback_query: CallbackQuery):
         )
 
         if file_type == "document":
-            sent_msg = await callback_query.message.answer_document(file_id)
+            await callback_query.message.answer_document(file_id)
         elif file_type == "video":
-            sent_msg = await callback_query.message.answer_video(file_id)
+            await callback_query.message.answer_video(file_id)
         elif file_type == "audio":
-            sent_msg = await callback_query.message.answer_audio(file_id)
+            await callback_query.message.answer_audio(file_id)
         elif file_type == "photo":
-            sent_msg = await callback_query.message.answer_photo(file_id)
-        else:
-            sent_msg = None
+            await callback_query.message.answer_photo(file_id)
 
         bot_info = await callback_query.bot.get_me()
         share_link = f"https://t.me/{bot_info.username}?start=file_{file_key}"
@@ -430,14 +425,6 @@ async def file_callbacks(callback_query: CallbackQuery):
             await callback_query.message.edit_text("🗑️ این فایل از لیست شما حذف شد.")
         except Exception:
             pass
-
-
-# Monitor kardane forward shodan ya zakhire shodan-e payamha (Baraye afzayesh amar forvard)
-@router.message(F.forward_from_chat | F.forward_from)
-async def monitor_forwards(message: Message):
-    # Barresi inke aya payam forvard shode marboot be in bot ya file hast ya na
-    # Agar kasi payam ro forvard kone, telegram in event ro mifereste
-    pass
 
 
 # ================= Bakhsh-e Khadamat Link =================
@@ -607,6 +594,7 @@ async def finalize_and_create_link(message: Message, state: FSMContext) -> None:
     expire_gregorian = data.get("expire_gregorian")
 
     short_url = None
+    kutt_id = None
     error_details = ""
     
     payload = {
@@ -627,6 +615,7 @@ async def finalize_and_create_link(message: Message, state: FSMContext) -> None:
                 if resp.status in (200, 201):
                     resp_data = await resp.json()
                     short_url = resp_data.get("link") or resp_data.get("full_url")
+                    kutt_id = resp_data.get("id")  # Shenase dakheli kutt baraye gereftan amar
                     if short_url:
                         parsed_short = urlparse(short_url)
                         parsed_short = parsed_short._replace(netloc="kutt-production-0880.up.railway.app", scheme="https")
@@ -650,9 +639,9 @@ async def finalize_and_create_link(message: Message, state: FSMContext) -> None:
     link_id = f"link_{user_id}_{count + 1}"
 
     cursor.execute("""
-        INSERT INTO links (link_id, user_id, link_name, long_url, short_url, password, expire_date, expire_gregorian, deleted)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 0)
-    """, (link_id, user_id, link_name, long_url, short_url, password, expire_date_str, expire_gregorian))
+        INSERT INTO links (link_id, user_id, link_name, long_url, short_url, kutt_id, password, expire_date, expire_gregorian, deleted)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 0)
+    """, (link_id, user_id, link_name, long_url, short_url, kutt_id, password, expire_date_str, expire_gregorian))
     conn.commit()
     cursor.close()
     conn.close()
@@ -703,7 +692,7 @@ async def link_callbacks(callback_query: CallbackQuery):
 
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT link_name, long_url, short_url, password, expire_date, expire_gregorian, deleted FROM links WHERE link_id = %s", (link_key_id,))
+    cursor.execute("SELECT link_name, long_url, short_url, kutt_id, password, expire_date, expire_gregorian, deleted FROM links WHERE link_id = %s", (link_key_id,))
     row = cursor.fetchone()
 
     if not row:
@@ -712,7 +701,7 @@ async def link_callbacks(callback_query: CallbackQuery):
         await callback_query.answer("⚠️ این لینک وجود ندارد.", show_alert=True)
         return
 
-    link_name, long_url, short_url, password, expire_date, expire_gregorian, deleted = row
+    link_name, long_url, short_url, kutt_id, password, expire_date, expire_gregorian, deleted = row
 
     if action == "vlink":
         cursor.close()
@@ -720,7 +709,50 @@ async def link_callbacks(callback_query: CallbackQuery):
         if deleted == 1:
             await callback_query.answer("⚠️ این لینک حذف شده است.", show_alert=True)
             return
-        
+
+        # Gereftan amar az Kutt API (agar kutt_id mojood bashad)
+        total_clicks = 0
+        referrers_text = "ندارد یا مستقیم ❌"
+        browsers_text = "اطلاعاتی ثبت نشده ❌"
+        countries_text = "اطلاعاتی ثبت نشده ❌"
+        os_text = "اطلاعاتی ثبت نشده ❌"
+
+        if kutt_id:
+            async with aiohttp.ClientSession() as session:
+                headers = {"X-API-Key": KUTT_API_KEY}
+                stats_url = f"https://kutt-production-0880.up.railway.app/api/v2/links/stats?id={kutt_id}"
+                try:
+                    async with session.get(stats_url, headers=headers) as resp:
+                        if resp.status == 200:
+                            stats_data = await resp.json()
+                            total_clicks = stats_data.get("total_clicks", 0)
+                            
+                            # 1. Referrers -> manabe vorood (ba zaban sadeh)
+                            refs = stats_data.get("referrers", [])
+                            if refs:
+                                ref_list = [f"• {item.get('_id', 'سایر')}: {item.get('count', 0)} بار" for item in refs[:5]]
+                                referrers_text = "\n" + "\n".join(ref_list)
+
+                            # 2. Browsers -> mororgarha
+                            browsers = stats_data.get("browsers", [])
+                            if browsers:
+                                b_list = [f"• {item.get('_id', 'سایر')}: {item.get('count', 0)} بار" for item in browsers[:5]]
+                                browsers_text = "\n" + "\n".join(b_list)
+
+                            # 3. Countries -> keshvarha
+                            countries = stats_data.get("countries", [])
+                            if countries:
+                                c_list = [f"• {item.get('_id', 'سایر')}: {item.get('count', 0)} بار" for item in countries[:5]]
+                                countries_text = "\n" + "\n".join(c_list)
+
+                            # 4. Operating Systems -> narmafzar / system amel
+                            os_list_data = stats_data.get("os", [])
+                            if os_list_data:
+                                o_list = [f"• {item.get('_id', 'سایر')}: {item.get('count', 0)} بار" for item in os_list_data[:5]]
+                                os_text = "\n" + "\n".join(o_list)
+                except Exception as e:
+                    logging.error(f"Error fetching stats from Kutt: {e}")
+
         if password:
             pass_text = f"🔒 رمز عبور: {password}"
         else:
@@ -735,13 +767,20 @@ async def link_callbacks(callback_query: CallbackQuery):
             expire_text = "⏳ تاریخ انقضا: ندارد ❌"
 
         await callback_query.message.answer(
-            f"📊 اطلاعات لینک ({link_name}):\n\n"
+            f"📊 اطلاعات و آمار لینک ({link_name}):\n\n"
             f"🌐 لینک اصلی:\n{long_url}\n\n"
             f"🔗 لینک کوتاه:\n{short_url}\n\n"
+            f"👁️ کل کلیک‌ها: {total_clicks}\n"
+            f"───────────────────\n"
+            f"📍 **منابع ورود کاربران** (از کجا وارد شده‌اند):\n{referrers_text}\n\n"
+            f"💻 **مرورگرهای استفاده شده**:\n{browsers_text}\n\n"
+            f"🌍 **کشور بازدیدکنندگان**:\n{countries_text}\n\n"
+            f"📱 **سیستم‌عامل دستگاه‌ها**:\n{os_text}\n\n"
+            f"───────────────────\n"
             f"{pass_text}\n"
             f"{expire_text}"
         )
-        await callback_query.answer("✅ اطلاعات ارسال شد.")
+        await callback_query.answer("✅ آمار کامل ارسال شد.")
 
     elif action == "dlink":
         cursor.execute("UPDATE links SET deleted = 1 WHERE link_id = %s", (link_key_id,))
