@@ -723,8 +723,6 @@ async def link_callbacks(callback_query: CallbackQuery):
                 for stats_url in stats_urls:
                     try:
                         async with session.get(stats_url, headers=headers) as resp:
-                            response_text = await resp.text()
-                            logging.info(f"Kutt Stats URL: {stats_url} | Status: {resp.status} | Response: {response_text}")
                             if resp.status == 200:
                                 stats_data = await resp.json()
                                 break
@@ -732,45 +730,44 @@ async def link_callbacks(callback_query: CallbackQuery):
                         logging.error(f"Error fetching stats from {stats_url}: {e}")
 
                 if stats_data:
-                    total_clicks = (
-                        stats_data.get("total_views") or 
-                        stats_data.get("total_clicks") or 
-                        stats_data.get("views") or 
-                        stats_data.get("clicks") or 0
-                    )
+                    # خواندن تعداد کلیک از کلید total
+                    total_clicks = stats_data.get("total", 0)
                     if isinstance(total_clicks, dict):
                         total_clicks = total_clicks.get("count", 0)
 
-                    # 1. منابع ورود (Referrers)
-                    refs = stats_data.get("referrers", []) or stats_data.get("refs", [])
+                    # 1. منابع ورود (Referrer)
+                    refs = stats_data.get("referrer", []) or stats_data.get("referrers", [])
                     if refs:
                         ref_list = []
                         for item in refs[:5]:
-                            name = item.get('_id') or item.get('name') or item.get('label') or 'Direct/مستقیم'
-                            cnt = item.get('count') or item.get('clicks') or item.get('views') or 0
-                            ref_list.append(f"• {name}: {cnt} بار")
+                            name = item.get('name') or item.get('_id') or 'Direct/مستقیم'
+                            cnt = item.get('value') or item.get('count') or 0
+                            if cnt > 0:
+                                ref_list.append(f"• {name}: {cnt} بار")
                         if ref_list:
                             referrers_text = "\n" + "\n".join(ref_list)
 
                     # 2. مرورگرها (Browsers)
-                    browsers = stats_data.get("browsers", [])
+                    browsers = stats_data.get("browser", []) or stats_data.get("browsers", [])
                     if browsers:
                         b_list = []
                         for item in browsers[:5]:
-                            name = item.get('_id') or item.get('name') or item.get('label') or 'سایر'
-                            cnt = item.get('count') or item.get('clicks') or item.get('views') or 0
-                            b_list.append(f"• {name}: {cnt} بار")
+                            name = item.get('name') or 'سایر'
+                            cnt = item.get('value') or 0
+                            if cnt > 0:
+                                b_list.append(f"• {name}: {cnt} بار")
                         if b_list:
                             browsers_text = "\n" + "\n".join(b_list)
 
                     # 3. کشورها (Countries)
-                    countries = stats_data.get("countries", [])
+                    countries = stats_data.get("country", []) or stats_data.get("countries", [])
                     if countries:
                         c_list = []
                         for item in countries[:5]:
-                            name = item.get('_id') or item.get('name') or item.get('label') or 'سایر'
-                            cnt = item.get('count') or item.get('clicks') or item.get('views') or 0
-                            c_list.append(f"• {name}: {cnt} بار")
+                            name = item.get('name') or 'سایر'
+                            cnt = item.get('value') or 0
+                            if cnt > 0:
+                                c_list.append(f"• {name}: {cnt} بار")
                         if c_list:
                             countries_text = "\n" + "\n".join(c_list)
 
@@ -779,9 +776,10 @@ async def link_callbacks(callback_query: CallbackQuery):
                     if os_list_data:
                         o_list = []
                         for item in os_list_data[:5]:
-                            name = item.get('_id') or item.get('name') or item.get('label') or 'سایر'
-                            cnt = item.get('count') or item.get('clicks') or item.get('views') or 0
-                            o_list.append(f"• {name}: {cnt} بار")
+                            name = item.get('name') or 'سایر'
+                            cnt = item.get('value') or 0
+                            if cnt > 0:
+                                o_list.append(f"• {name}: {cnt} بار")
                         if o_list:
                             os_text = "\n" + "\n".join(o_list)
 
@@ -839,4 +837,3 @@ async def main() -> None:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, stream=sys.stdout)
     asyncio.run(main())
-    
