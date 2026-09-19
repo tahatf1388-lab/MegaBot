@@ -634,17 +634,17 @@ async def finalize_and_create_link(message: Message, state: FSMContext) -> None:
     count = cursor.fetchone()[0]
     link_id = f"link_{user_id}_{count + 1}"
 
-    # استخراج پسوند کوتاه لینک (Short link key) برای مطابقت صددرصدی با Kutt
-    short_key = kutt_id
+    # استخراج کل بخش کوتاه (مانند mysecretjwtkey...) از انتهای آدرس کوتاه
+    short_path_key = kutt_id
     if short_url:
         path_parts = [p for p in urlparse(short_url).path.split('/') if p]
         if path_parts:
-            short_key = path_parts[-1]
+            short_path_key = path_parts[-1]
 
     cursor.execute("""
         INSERT INTO links (link_id, user_id, link_name, long_url, short_url, kutt_id, password, expire_date, expire_gregorian, deleted)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 0)
-    """, (link_id, user_id, link_name, long_url, short_url, short_key, password, expire_date_str, expire_gregorian))
+    """, (link_id, user_id, link_name, long_url, short_url, short_path_key, password, expire_date_str, expire_gregorian))
     conn.commit()
     cursor.close()
     conn.close()
@@ -655,7 +655,7 @@ async def finalize_and_create_link(message: Message, state: FSMContext) -> None:
         f"📌 نام: {link_name}\n"
         f"🔒 رمز عبور: {'دارد ✅' if password else 'ندارد ❌'}\n"
         f"⏳ تاریخ انقضا: {expire_date_str if expire_date_str else 'ندارد ❌'}\n\n"
-        f"🔗 لینک کوتاه شده:\n"
+        f"🔗 لینک کوتاه شده (Short link):\n"
         f"{short_url}",
         reply_markup=link_services_keyboard
     )
@@ -719,7 +719,7 @@ async def link_callbacks(callback_query: CallbackQuery):
         countries_text = "اطلاعاتی ثبت نشده ❌"
         os_text = "اطلاعاتی ثبت نشده ❌"
 
-        # استخراج دقیق Short link key برای درخواست آمار از Kutt
+        # استخراج کلید Short link برای درخواست دقیق آمار
         target_id = kutt_id
         if not target_id and short_url:
             path_parts = [p for p in urlparse(short_url).path.split('/') if p]
@@ -730,7 +730,6 @@ async def link_callbacks(callback_query: CallbackQuery):
             async with aiohttp.ClientSession() as session:
                 headers = {"X-API-Key": KUTT_API_KEY}
                 
-                # درخواست آمار با استفاده از شناسه کوتاه لینک (Short link key)
                 stats_urls = [
                     f"https://kutt-production-0880.up.railway.app/api/v2/links/stats?id={target_id}",
                     f"https://kutt-production-0880.up.railway.app/api/v2/links/{target_id}/stats"
