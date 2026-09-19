@@ -591,6 +591,7 @@ async def finalize_and_create_link(message: Message, state: FSMContext) -> None:
 
     short_url = None
     kutt_id = None
+    stats_id = None
     error_details = ""
     
     payload = {
@@ -612,6 +613,8 @@ async def finalize_and_create_link(message: Message, state: FSMContext) -> None:
                     resp_data = await resp.json()
                     short_url = resp_data.get("link") or resp_data.get("full_url")
                     kutt_id = resp_data.get("id")
+                    # ذخیره شناسه آماری بازگشتی از Kutt
+                    stats_id = resp_data.get("stats_id") or resp_data.get("analytics_id")
                     if short_url:
                         parsed_short = urlparse(short_url)
                         parsed_short = parsed_short._replace(netloc="kutt-production-0880.up.railway.app", scheme="https")
@@ -634,10 +637,18 @@ async def finalize_and_create_link(message: Message, state: FSMContext) -> None:
     count = cursor.fetchone()[0]
     link_id = f"link_{user_id}_{count + 1}"
 
+    # اگر stats_id مستقیم نیامد، از kutt_id یا بخش انتهایی لینک کوتاه استفاده می‌کنیم
+    if not stats_id:
+        stats_id = kutt_id
+        if not stats_id and short_url:
+            path_parts = [p for p in urlparse(short_url).path.split('/') if p]
+            if path_parts:
+                stats_id = path_parts[-1]
+
     cursor.execute("""
         INSERT INTO links (link_id, user_id, link_name, long_url, short_url, kutt_id, password, expire_date, expire_gregorian, deleted)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 0)
-    """, (link_id, user_id, link_name, long_url, short_url, kutt_id, password, expire_date_str, expire_gregorian))
+    """, (link_id, user_id, link_name, long_url, short_url, stats_id, password, expire_date_str, expire_gregorian))
     conn.commit()
     cursor.close()
     conn.close()
@@ -712,21 +723,23 @@ async def link_callbacks(callback_query: CallbackQuery):
         countries_text = "اطلاعاتی ثبت نشده ❌"
         os_text = "اطلاعاتی ثبت نشده ❌"
 
-        # استخراج هوشمند kutt_id از روی short_url اگر kutt_id در دیتابیس خالی باشد
+        # استخراج شناسه‌ی آماری برای استعلام دقیق از Kutt
         target_id = kutt_id
         if not target_id and short_url:
-            parsed = urlparse(short_url)
-            path_parts = [p for p in parsed.path.split('/') if p]
+            path_parts = [p for p in urlparse(short_url).path.split('/') if p]
             if path_parts:
                 target_id = path_parts[-1]
 
         if target_id:
             async with aiohttp.ClientSession() as session:
                 headers = {"X-API-Key": KUTT_API_KEY}
+                
+                # لیست مسیرهای احتمالی برای دریافت آمار در Kutt
                 stats_urls = [
-                    f"https://kutt-production-0880.up.railway.app/api/v2/links/{target_id}/stats",
-                    f"https://kutt-production-0880.up.railway.app/api/v2/links/stats?id={target_id}"
+                    f"https://kutt-production-0880.up.railway.app/api/v2/links/stats?id={target_id}",
+                    f"https://kutt-production-0880.up.railway.app/api/v2/links/{target_id}/stats"
                 ]
+                
                 stats_data = None
                 for stats_url in stats_urls:
                     try:
@@ -738,9 +751,12 @@ async def link_callbacks(callback_query: CallbackQuery):
                         logging.error(f"Error fetching stats from {stats_url}: {e}")
 
                 if stats_data:
+                    # خواندن تعداد کلیک از ساختار پاسخ Kutt
                     total_clicks = stats_data.get("total", 0)
                     if isinstance(total_clicks, dict):
                         total_clicks = total_clicks.get("count", 0)
+                    if not total_clicks:
+                        total_clicks = stats_data.get("total_views") or stats_data.get("total_clicks") or stats_data.get("views") or stats_data.get("clicks") or 0
 
                     # 1. منابع ورود (Referrer)
                     refs = stats_data.get("referrer", []) or stats_data.get("referrers", [])
@@ -759,8 +775,8 @@ async def link_callbacks(callback_query: CallbackQuery):
                     if browsers:
                         b_list = []
                         for item in browsers[:5]:
-                            name = item.get('name') or 'سایر'
-                            cnt = item.get('value') or 0
+                            name = item.get('name') or item.get('_id') or 'سایر'
+                            cnt = item.get('value') or item.get('count') or 0
                             if cnt > 0:
                                 b_list.append(f"• {name}: {cnt} بار")
                         if b_list:
@@ -771,8 +787,8 @@ async def link_callbacks(callback_query: CallbackQuery):
                     if countries:
                         c_list = []
                         for item in countries[:5]:
-                            name = item.get('name') or 'سایر'
-                            cnt = item.get('value') or 0
+                            name = item.get('name') or item.get('_id') or 'سایر'
+                            cnt = item.get('value') or item.get('count') or 0
                             if cnt > 0:
                                 c_list.append(f"• {name}: {cnt} بار")
                         if c_list:
@@ -783,8 +799,8 @@ async def link_callbacks(callback_query: CallbackQuery):
                     if os_list_data:
                         o_list = []
                         for item in os_list_data[:5]:
-                            name = item.get('name') or 'سایر'
-                            cnt = item.get('value') or 0
+                            name = item.get('name') or item.get('_id') or 'سایر'
+                            cnt = item.get('value') or item.get('count') or 0
                             if cnt > 0:
                                 o_list.append(f"• {name}: {cnt} بار")
                         if o_list:
@@ -844,4 +860,3 @@ async def main() -> None:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, stream=sys.stdout)
     asyncio.run(main())
-    
