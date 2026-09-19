@@ -591,7 +591,6 @@ async def finalize_and_create_link(message: Message, state: FSMContext) -> None:
 
     short_url = None
     kutt_id = None
-    stats_id = None
     error_details = ""
     
     payload = {
@@ -613,8 +612,6 @@ async def finalize_and_create_link(message: Message, state: FSMContext) -> None:
                     resp_data = await resp.json()
                     short_url = resp_data.get("link") or resp_data.get("full_url")
                     kutt_id = resp_data.get("id")
-                    # ذخیره شناسه آماری بازگشتی از Kutt
-                    stats_id = resp_data.get("stats_id") or resp_data.get("analytics_id")
                     if short_url:
                         parsed_short = urlparse(short_url)
                         parsed_short = parsed_short._replace(netloc="kutt-production-0880.up.railway.app", scheme="https")
@@ -637,18 +634,17 @@ async def finalize_and_create_link(message: Message, state: FSMContext) -> None:
     count = cursor.fetchone()[0]
     link_id = f"link_{user_id}_{count + 1}"
 
-    # اگر stats_id مستقیم نیامد، از kutt_id یا بخش انتهایی لینک کوتاه استفاده می‌کنیم
-    if not stats_id:
-        stats_id = kutt_id
-        if not stats_id and short_url:
-            path_parts = [p for p in urlparse(short_url).path.split('/') if p]
-            if path_parts:
-                stats_id = path_parts[-1]
+    # استخراج پسوند کوتاه لینک (Short link key) برای مطابقت صددرصدی با Kutt
+    short_key = kutt_id
+    if short_url:
+        path_parts = [p for p in urlparse(short_url).path.split('/') if p]
+        if path_parts:
+            short_key = path_parts[-1]
 
     cursor.execute("""
         INSERT INTO links (link_id, user_id, link_name, long_url, short_url, kutt_id, password, expire_date, expire_gregorian, deleted)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 0)
-    """, (link_id, user_id, link_name, long_url, short_url, stats_id, password, expire_date_str, expire_gregorian))
+    """, (link_id, user_id, link_name, long_url, short_url, short_key, password, expire_date_str, expire_gregorian))
     conn.commit()
     cursor.close()
     conn.close()
@@ -723,7 +719,7 @@ async def link_callbacks(callback_query: CallbackQuery):
         countries_text = "اطلاعاتی ثبت نشده ❌"
         os_text = "اطلاعاتی ثبت نشده ❌"
 
-        # استخراج شناسه‌ی آماری برای استعلام دقیق از Kutt
+        # استخراج دقیق Short link key برای درخواست آمار از Kutt
         target_id = kutt_id
         if not target_id and short_url:
             path_parts = [p for p in urlparse(short_url).path.split('/') if p]
@@ -734,7 +730,7 @@ async def link_callbacks(callback_query: CallbackQuery):
             async with aiohttp.ClientSession() as session:
                 headers = {"X-API-Key": KUTT_API_KEY}
                 
-                # لیست مسیرهای احتمالی برای دریافت آمار در Kutt
+                # درخواست آمار با استفاده از شناسه کوتاه لینک (Short link key)
                 stats_urls = [
                     f"https://kutt-production-0880.up.railway.app/api/v2/links/stats?id={target_id}",
                     f"https://kutt-production-0880.up.railway.app/api/v2/links/{target_id}/stats"
@@ -751,7 +747,6 @@ async def link_callbacks(callback_query: CallbackQuery):
                         logging.error(f"Error fetching stats from {stats_url}: {e}")
 
                 if stats_data:
-                    # خواندن تعداد کلیک از ساختار پاسخ Kutt
                     total_clicks = stats_data.get("total", 0)
                     if isinstance(total_clicks, dict):
                         total_clicks = total_clicks.get("count", 0)
@@ -822,7 +817,7 @@ async def link_callbacks(callback_query: CallbackQuery):
         await callback_query.message.answer(
             f"📊 اطلاعات و آمار لینک ({link_name}):\n\n"
             f"🌐 لینک اصلی:\n{long_url}\n\n"
-            f"🔗 لینک کوتاه:\n{short_url}\n\n"
+            f"🔗 لینک کوتاه (Short link):\n{short_url}\n\n"
             f"👁️ کل کلیک‌ها: {total_clicks}\n"
             f"───────────────────\n"
             f"📍 **منابع ورود کاربران** (از کجا وارد شده‌اند):\n{referrers_text}\n\n"
