@@ -5,7 +5,7 @@ import os
 import aiohttp
 import psycopg2
 from urllib.parse import urlparse, urlunparse
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from aiohttp import web
 from aiogram import Bot, Dispatcher, F, Router
@@ -51,9 +51,15 @@ def init_db():
             file_id TEXT,
             file_type TEXT,
             file_name TEXT,
+            views INTEGER DEFAULT 0,
+            forwards INTEGER DEFAULT 0,
             deleted INTEGER DEFAULT 0
         )
     """)
+    
+    # Ezafe kardan sotonhaye amari agar ghablan sakhte shode bashand
+    cursor.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS views INTEGER DEFAULT 0;")
+    cursor.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS forwards INTEGER DEFAULT 0;")
     
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS links (
@@ -69,7 +75,6 @@ def init_db():
             deleted INTEGER DEFAULT 0
         )
     """)
-    # Ezafe kardan sotonhaye jadid agar ghablan sakhte shode bashand
     cursor.execute("ALTER TABLE links ADD COLUMN IF NOT EXISTS password TEXT;")
     cursor.execute("ALTER TABLE links ADD COLUMN IF NOT EXISTS expire_date TEXT;")
     cursor.execute("ALTER TABLE links ADD COLUMN IF NOT EXISTS expire_gregorian TIMESTAMP;")
@@ -80,7 +85,6 @@ def init_db():
 
 init_db()
 
-# Tabdil-e tarikh shamsi be miladi
 def jalali_to_gregorian(jy, jm, jd):
     gy = (jy <= 979) and 621 or 1600
     jy = (jy <= 979) and jy or jy - 979
@@ -182,14 +186,20 @@ async def command_start_handler(message: Message, state: FSMContext) -> None:
         cursor = conn.cursor()
         cursor.execute("SELECT file_id, file_type, deleted FROM files WHERE file_key = %s", (file_key,))
         row = cursor.fetchone()
-        cursor.close()
-        conn.close()
 
         if row:
             file_id, file_type, deleted = row
             if deleted == 1:
+                cursor.close()
+                conn.close()
                 await message.answer("⚠️ متأسفانه این فایل توسط صاحب آن حذف شده است. ❌")
             else:
+                # Ezafe kardan yek vahed be amare bazdid (views)
+                cursor.execute("UPDATE files SET views = views + 1 WHERE file_key = %s", (file_key,))
+                conn.commit()
+                cursor.close()
+                conn.close()
+
                 await message.answer("🎁 این هم فایل درخواستی شما: 👇")
                 if file_type == "document":
                     await message.answer_document(file_id)
@@ -200,6 +210,8 @@ async def command_start_handler(message: Message, state: FSMContext) -> None:
                 elif file_type == "photo":
                     await message.answer_photo(file_id)
         else:
+            cursor.close()
+            conn.close()
             await message.answer("⚠️ متأسفانه فایل مورد نظر پیدا نشد یا منقضی شده است. ❌")
 
         await message.answer("🏠 به منوی اصلی برگشتید: 👇", reply_markup=main_menu_keyboard)
@@ -309,8 +321,8 @@ async def receive_file_name(message: Message, state: FSMContext) -> None:
     file_key = f"f_{user_id}_{count + 1}"
 
     cursor.execute("""
-        INSERT INTO files (file_key, user_id, file_id, file_type, file_name, deleted)
-        VALUES (%s, %s, %s, %s, %s, 0)
+        INSERT INTO files (file_key, user_id, file_id, file_type, file_name, views, forwards, deleted)
+        VALUES (%s, %s, %s, %s, %s, 0, 0, 0)
     """, (file_key, user_id, file_data["file_id"], file_data["file_type"], file_name))
     conn.commit()
     cursor.close()
@@ -362,7 +374,7 @@ async def file_callbacks(callback_query: CallbackQuery):
     
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT file_id, file_type, file_name, deleted FROM files WHERE file_key = %s", (file_key,))
+    cursor.execute("SELECT file_id, file_type, file_name, views, forwards, deleted FROM files WHERE file_key = %s", (file_key,))
     row = cursor.fetchone()
 
     if not row:
@@ -371,7 +383,7 @@ async def file_callbacks(callback_query: CallbackQuery):
         await callback_query.answer("⚠️ این فایل دیگر وجود ندارد.", show_alert=True)
         return
 
-    file_id, file_type, file_name, deleted = row
+    file_id, file_type, file_name, views, forwards, deleted = row
 
     if action == "vfile":
         cursor.close()
@@ -380,15 +392,24 @@ async def file_callbacks(callback_query: CallbackQuery):
             await callback_query.answer("⚠️ این فایل حذف شده است.", show_alert=True)
             return
         
-        await callback_query.message.answer(f"📁 فایل شما ({file_name}): 👇")
+        # Namayesh etelaat va amar file
+        await callback_query.message.answer(
+            f"📁 فایل شما ({file_name}): 👇\n\n"
+            f"📊 آمار فایل:\n"
+            f"👁️ تعداد مشاهده: {views}\n"
+            f"🔄 تعداد ذخیره شده (فوروارد): {forwards}"
+        )
+
         if file_type == "document":
-            await callback_query.message.answer_document(file_id)
+            sent_msg = await callback_query.message.answer_document(file_id)
         elif file_type == "video":
-            await callback_query.message.answer_video(file_id)
+            sent_msg = await callback_query.message.answer_video(file_id)
         elif file_type == "audio":
-            await callback_query.message.answer_audio(file_id)
+            sent_msg = await callback_query.message.answer_audio(file_id)
         elif file_type == "photo":
-            await callback_query.message.answer_photo(file_id)
+            sent_msg = await callback_query.message.answer_photo(file_id)
+        else:
+            sent_msg = None
 
         bot_info = await callback_query.bot.get_me()
         share_link = f"https://t.me/{bot_info.username}?start=file_{file_key}"
@@ -396,7 +417,7 @@ async def file_callbacks(callback_query: CallbackQuery):
             f"🔗 لینک اختصاصی فایل ({file_name}):\n\n"
             f"{share_link}"
         )
-        await callback_query.answer("✅ فایل و لینک ارسال شد.")
+        await callback_query.answer("✅ فایل و آمار ارسال شد.")
 
     elif action == "dfile":
         cursor.execute("UPDATE files SET deleted = 1 WHERE file_key = %s", (file_key,))
@@ -409,6 +430,14 @@ async def file_callbacks(callback_query: CallbackQuery):
             await callback_query.message.edit_text("🗑️ این فایل از لیست شما حذف شد.")
         except Exception:
             pass
+
+
+# Monitor kardane forward shodan ya zakhire shodan-e payamha (Baraye afzayesh amar forvard)
+@router.message(F.forward_from_chat | F.forward_from)
+async def monitor_forwards(message: Message):
+    # Barresi inke aya payam forvard shode marboot be in bot ya file hast ya na
+    # Agar kasi payam ro forvard kone, telegram in event ro mifereste
+    pass
 
 
 # ================= Bakhsh-e Khadamat Link =================
@@ -692,13 +721,11 @@ async def link_callbacks(callback_query: CallbackQuery):
             await callback_query.answer("⚠️ این لینک حذف شده است.", show_alert=True)
             return
         
-        # Check password text
         if password:
             pass_text = f"🔒 رمز عبور: {password}"
         else:
             pass_text = "🔒 رمز عبور: ندارد ❌"
 
-        # Check expiration status
         if expire_date:
             if expire_gregorian and datetime.now() > expire_gregorian:
                 expire_text = f"⏳ تاریخ انقضا: {expire_date} (منقضی شده ❌)"
