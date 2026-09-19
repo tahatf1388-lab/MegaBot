@@ -253,8 +253,6 @@ async def back_to_main(message: Message, state: FSMContext) -> None:
     await message.answer("🏠 به منوی اصلی برگشتید: 👇", reply_markup=main_menu_keyboard)
 
 
-# ================= Bakhsh-e Upload File =================
-
 @router.message(F.text == "📁 آپلود فایل و دریافت لینک")
 async def upload_file_prompt(message: Message, state: FSMContext) -> None:
     await state.set_state(BotStates.waiting_for_file_upload)
@@ -426,8 +424,6 @@ async def file_callbacks(callback_query: CallbackQuery):
         except Exception:
             pass
 
-
-# ================= Bakhsh-e Khadamat Link =================
 
 @router.message(F.text == "➕ افزودن لینک جدید")
 async def add_link_prompt(message: Message, state: FSMContext) -> None:
@@ -727,6 +723,8 @@ async def link_callbacks(callback_query: CallbackQuery):
                 for stats_url in stats_urls:
                     try:
                         async with session.get(stats_url, headers=headers) as resp:
+                            response_text = await resp.text()
+                            logging.info(f"Kutt Stats URL: {stats_url} | Status: {resp.status} | Response: {response_text}")
                             if resp.status == 200:
                                 stats_data = await resp.json()
                                 break
@@ -841,3 +839,4 @@ async def main() -> None:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, stream=sys.stdout)
     asyncio.run(main())
+    
