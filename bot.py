@@ -634,7 +634,7 @@ async def finalize_and_create_link(message: Message, state: FSMContext) -> None:
     count = cursor.fetchone()[0]
     link_id = f"link_{user_id}_{count + 1}"
 
-    # استخراج کل بخش کوتاه (مانند mysecretjwtkey...) از انتهای آدرس کوتاه
+    # استخراج کلید کامل کوتاه از انتهای آدرس کوتاه
     short_path_key = kutt_id
     if short_url:
         path_parts = [p for p in urlparse(short_url).path.split('/') if p]
@@ -714,12 +714,8 @@ async def link_callbacks(callback_query: CallbackQuery):
             return
 
         total_clicks = 0
-        referrers_text = "ندارد یا مستقیم ❌"
-        browsers_text = "اطلاعاتی ثبت نشده ❌"
-        countries_text = "اطلاعاتی ثبت نشده ❌"
-        os_text = "اطلاعاتی ثبت نشده ❌"
 
-        # استخراج کلید Short link برای درخواست دقیق آمار
+        # استخراج کلید Short link برای درخواست آمار از Kutt
         target_id = kutt_id
         if not target_id and short_url:
             path_parts = [p for p in urlparse(short_url).path.split('/') if p]
@@ -752,54 +748,6 @@ async def link_callbacks(callback_query: CallbackQuery):
                     if not total_clicks:
                         total_clicks = stats_data.get("total_views") or stats_data.get("total_clicks") or stats_data.get("views") or stats_data.get("clicks") or 0
 
-                    # 1. منابع ورود (Referrer)
-                    refs = stats_data.get("referrer", []) or stats_data.get("referrers", [])
-                    if refs:
-                        ref_list = []
-                        for item in refs[:5]:
-                            name = item.get('name') or item.get('_id') or 'Direct/مستقیم'
-                            cnt = item.get('value') or item.get('count') or 0
-                            if cnt > 0:
-                                ref_list.append(f"• {name}: {cnt} بار")
-                        if ref_list:
-                            referrers_text = "\n" + "\n".join(ref_list)
-
-                    # 2. مرورگرها (Browsers)
-                    browsers = stats_data.get("browser", []) or stats_data.get("browsers", [])
-                    if browsers:
-                        b_list = []
-                        for item in browsers[:5]:
-                            name = item.get('name') or item.get('_id') or 'سایر'
-                            cnt = item.get('value') or item.get('count') or 0
-                            if cnt > 0:
-                                b_list.append(f"• {name}: {cnt} بار")
-                        if b_list:
-                            browsers_text = "\n" + "\n".join(b_list)
-
-                    # 3. کشورها (Countries)
-                    countries = stats_data.get("country", []) or stats_data.get("countries", [])
-                    if countries:
-                        c_list = []
-                        for item in countries[:5]:
-                            name = item.get('name') or item.get('_id') or 'سایر'
-                            cnt = item.get('value') or item.get('count') or 0
-                            if cnt > 0:
-                                c_list.append(f"• {name}: {cnt} بار")
-                        if c_list:
-                            countries_text = "\n" + "\n".join(c_list)
-
-                    # 4. سیستم‌عامل‌ها (Operating Systems)
-                    os_list_data = stats_data.get("os", []) or stats_data.get("operating_systems", [])
-                    if os_list_data:
-                        o_list = []
-                        for item in os_list_data[:5]:
-                            name = item.get('name') or item.get('_id') or 'سایر'
-                            cnt = item.get('value') or item.get('count') or 0
-                            if cnt > 0:
-                                o_list.append(f"• {name}: {cnt} بار")
-                        if o_list:
-                            os_text = "\n" + "\n".join(o_list)
-
         if password:
             pass_text = f"🔒 رمز عبور: {password}"
         else:
@@ -819,15 +767,10 @@ async def link_callbacks(callback_query: CallbackQuery):
             f"🔗 لینک کوتاه (Short link):\n{short_url}\n\n"
             f"👁️ کل کلیک‌ها: {total_clicks}\n"
             f"───────────────────\n"
-            f"📍 **منابع ورود کاربران** (از کجا وارد شده‌اند):\n{referrers_text}\n\n"
-            f"💻 **مرورگرهای استفاده شده**:\n{browsers_text}\n\n"
-            f"🌍 **کشور بازدیدکنندگان**:\n{countries_text}\n\n"
-            f"📱 **سیستم‌عامل دستگاه‌ها**:\n{os_text}\n\n"
-            f"───────────────────\n"
             f"{pass_text}\n"
             f"{expire_text}"
         )
-        await callback_query.answer("✅ آمار کامل ارسال شد.")
+        await callback_query.answer("✅ آمار ارسال شد.")
 
     elif action == "dlink":
         cursor.execute("UPDATE links SET deleted = 1 WHERE link_id = %s", (link_key_id,))
