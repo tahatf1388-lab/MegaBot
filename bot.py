@@ -615,7 +615,7 @@ async def finalize_and_create_link(message: Message, state: FSMContext) -> None:
                 if resp.status in (200, 201):
                     resp_data = await resp.json()
                     short_url = resp_data.get("link") or resp_data.get("full_url")
-                    kutt_id = resp_data.get("id")  # Shenase dakheli kutt baraye gereftan amar
+                    kutt_id = resp_data.get("id")
                     if short_url:
                         parsed_short = urlparse(short_url)
                         parsed_short = parsed_short._replace(netloc="kutt-production-0880.up.railway.app", scheme="https")
@@ -710,7 +710,6 @@ async def link_callbacks(callback_query: CallbackQuery):
             await callback_query.answer("⚠️ این لینک حذف شده است.", show_alert=True)
             return
 
-        # Gereftan amar az Kutt API (agar kutt_id mojood bashad)
         total_clicks = 0
         referrers_text = "ندارد یا مستقیم ❌"
         browsers_text = "اطلاعاتی ثبت نشده ❌"
@@ -725,31 +724,55 @@ async def link_callbacks(callback_query: CallbackQuery):
                     async with session.get(stats_url, headers=headers) as resp:
                         if resp.status == 200:
                             stats_data = await resp.json()
-                            total_clicks = stats_data.get("total_clicks", 0)
                             
-                            # 1. Referrers -> manabe vorood (ba zaban sadeh)
+                            # دریافت تعداد کلیک‌ها بر اساس ساختار دقیق Kutt
+                            total_clicks = stats_data.get("total_clicks") or stats_data.get("views") or 0
+                            if not total_clicks and isinstance(stats_data.get("clicks"), int):
+                                total_clicks = stats_data.get("clicks")
+
+                            # 1. منابع ورود (Referrers)
                             refs = stats_data.get("referrers", [])
                             if refs:
-                                ref_list = [f"• {item.get('_id', 'سایر')}: {item.get('count', 0)} بار" for item in refs[:5]]
-                                referrers_text = "\n" + "\n".join(ref_list)
+                                ref_list = []
+                                for item in refs[:5]:
+                                    name = item.get('_id') or item.get('name') or 'Direct/مستقیم'
+                                    cnt = item.get('count') or item.get('clicks') or 0
+                                    ref_list.append(f"• {name}: {cnt} بار")
+                                if ref_list:
+                                    referrers_text = "\n" + "\n".join(ref_list)
 
-                            # 2. Browsers -> mororgarha
+                            # 2. مرورگرها (Browsers)
                             browsers = stats_data.get("browsers", [])
                             if browsers:
-                                b_list = [f"• {item.get('_id', 'سایر')}: {item.get('count', 0)} بار" for item in browsers[:5]]
-                                browsers_text = "\n" + "\n".join(b_list)
+                                b_list = []
+                                for item in browsers[:5]:
+                                    name = item.get('_id') or item.get('name') or 'سایر'
+                                    cnt = item.get('count') or item.get('clicks') or 0
+                                    b_list.append(f"• {name}: {cnt} بار")
+                                if b_list:
+                                    browsers_text = "\n" + "\n".join(b_list)
 
-                            # 3. Countries -> keshvarha
+                            # 3. کشورها (Countries)
                             countries = stats_data.get("countries", [])
                             if countries:
-                                c_list = [f"• {item.get('_id', 'سایر')}: {item.get('count', 0)} بار" for item in countries[:5]]
-                                countries_text = "\n" + "\n".join(c_list)
+                                c_list = []
+                                for item in countries[:5]:
+                                    name = item.get('_id') or item.get('name') or 'سایر'
+                                    cnt = item.get('count') or item.get('clicks') or 0
+                                    c_list.append(f"• {name}: {cnt} بار")
+                                if c_list:
+                                    countries_text = "\n" + "\n".join(c_list)
 
-                            # 4. Operating Systems -> narmafzar / system amel
+                            # 4. سیستم‌عامل‌ها (Operating Systems)
                             os_list_data = stats_data.get("os", [])
                             if os_list_data:
-                                o_list = [f"• {item.get('_id', 'سایر')}: {item.get('count', 0)} بار" for item in os_list_data[:5]]
-                                os_text = "\n" + "\n".join(o_list)
+                                o_list = []
+                                for item in os_list_data[:5]:
+                                    name = item.get('_id') or item.get('name') or 'سایر'
+                                    cnt = item.get('count') or item.get('clicks') or 0
+                                    o_list.append(f"• {name}: {cnt} بار")
+                                if o_list:
+                                    os_text = "\n" + "\n".join(o_list)
                 except Exception as e:
                     logging.error(f"Error fetching stats from Kutt: {e}")
 
@@ -807,3 +830,4 @@ async def main() -> None:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, stream=sys.stdout)
     asyncio.run(main())
+    
