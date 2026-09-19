@@ -712,12 +712,20 @@ async def link_callbacks(callback_query: CallbackQuery):
         countries_text = "اطلاعاتی ثبت نشده ❌"
         os_text = "اطلاعاتی ثبت نشده ❌"
 
-        if kutt_id:
+        # استخراج هوشمند kutt_id از روی short_url اگر kutt_id در دیتابیس خالی باشد
+        target_id = kutt_id
+        if not target_id and short_url:
+            parsed = urlparse(short_url)
+            path_parts = [p for p in parsed.path.split('/') if p]
+            if path_parts:
+                target_id = path_parts[-1]
+
+        if target_id:
             async with aiohttp.ClientSession() as session:
                 headers = {"X-API-Key": KUTT_API_KEY}
                 stats_urls = [
-                    f"https://kutt-production-0880.up.railway.app/api/v2/links/{kutt_id}/stats",
-                    f"https://kutt-production-0880.up.railway.app/api/v2/links/stats?id={kutt_id}"
+                    f"https://kutt-production-0880.up.railway.app/api/v2/links/{target_id}/stats",
+                    f"https://kutt-production-0880.up.railway.app/api/v2/links/stats?id={target_id}"
                 ]
                 stats_data = None
                 for stats_url in stats_urls:
@@ -730,7 +738,6 @@ async def link_callbacks(callback_query: CallbackQuery):
                         logging.error(f"Error fetching stats from {stats_url}: {e}")
 
                 if stats_data:
-                    # خواندن تعداد کلیک از کلید total
                     total_clicks = stats_data.get("total", 0)
                     if isinstance(total_clicks, dict):
                         total_clicks = total_clicks.get("count", 0)
@@ -837,3 +844,4 @@ async def main() -> None:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, stream=sys.stdout)
     asyncio.run(main())
+    
