@@ -634,7 +634,6 @@ async def finalize_and_create_link(message: Message, state: FSMContext) -> None:
     count = cursor.fetchone()[0]
     link_id = f"link_{user_id}_{count + 1}"
 
-    # استخراج کلید کامل کوتاه از انتهای آدرس کوتاه
     short_path_key = kutt_id
     if short_url:
         path_parts = [p for p in urlparse(short_url).path.split('/') if p]
@@ -713,41 +712,6 @@ async def link_callbacks(callback_query: CallbackQuery):
             await callback_query.answer("⚠️ این لینک حذف شده است.", show_alert=True)
             return
 
-        total_clicks = 0
-
-        # استخراج کلید Short link برای درخواست آمار از Kutt
-        target_id = kutt_id
-        if not target_id and short_url:
-            path_parts = [p for p in urlparse(short_url).path.split('/') if p]
-            if path_parts:
-                target_id = path_parts[-1]
-
-        if target_id:
-            async with aiohttp.ClientSession() as session:
-                headers = {"X-API-Key": KUTT_API_KEY}
-                
-                stats_urls = [
-                    f"https://kutt-production-0880.up.railway.app/api/v2/links/stats?id={target_id}",
-                    f"https://kutt-production-0880.up.railway.app/api/v2/links/{target_id}/stats"
-                ]
-                
-                stats_data = None
-                for stats_url in stats_urls:
-                    try:
-                        async with session.get(stats_url, headers=headers) as resp:
-                            if resp.status == 200:
-                                stats_data = await resp.json()
-                                break
-                    except Exception as e:
-                        logging.error(f"Error fetching stats from {stats_url}: {e}")
-
-                if stats_data:
-                    total_clicks = stats_data.get("total", 0)
-                    if isinstance(total_clicks, dict):
-                        total_clicks = total_clicks.get("count", 0)
-                    if not total_clicks:
-                        total_clicks = stats_data.get("total_views") or stats_data.get("total_clicks") or stats_data.get("views") or stats_data.get("clicks") or 0
-
         if password:
             pass_text = f"🔒 رمز عبور: {password}"
         else:
@@ -762,15 +726,14 @@ async def link_callbacks(callback_query: CallbackQuery):
             expire_text = "⏳ تاریخ انقضا: ندارد ❌"
 
         await callback_query.message.answer(
-            f"📊 اطلاعات و آمار لینک ({link_name}):\n\n"
+            f"📊 اطلاعات لینک ({link_name}):\n\n"
             f"🌐 لینک اصلی:\n{long_url}\n\n"
             f"🔗 لینک کوتاه (Short link):\n{short_url}\n\n"
-            f"👁️ کل کلیک‌ها: {total_clicks}\n"
             f"───────────────────\n"
             f"{pass_text}\n"
             f"{expire_text}"
         )
-        await callback_query.answer("✅ آمار ارسال شد.")
+        await callback_query.answer("✅ اطلاعات لینک ارسال شد.")
 
     elif action == "dlink":
         cursor.execute("UPDATE links SET deleted = 1 WHERE link_id = %s", (link_key_id,))
