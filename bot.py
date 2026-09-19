@@ -719,62 +719,73 @@ async def link_callbacks(callback_query: CallbackQuery):
         if kutt_id:
             async with aiohttp.ClientSession() as session:
                 headers = {"X-API-Key": KUTT_API_KEY}
-                stats_url = f"https://kutt-production-0880.up.railway.app/api/v2/links/stats?id={kutt_id}"
-                try:
-                    async with session.get(stats_url, headers=headers) as resp:
-                        if resp.status == 200:
-                            stats_data = await resp.json()
-                            
-                            # دریافت تعداد کلیک‌ها بر اساس ساختار دقیق Kutt
-                            total_clicks = stats_data.get("total_clicks") or stats_data.get("views") or 0
-                            if not total_clicks and isinstance(stats_data.get("clicks"), int):
-                                total_clicks = stats_data.get("clicks")
+                stats_urls = [
+                    f"https://kutt-production-0880.up.railway.app/api/v2/links/{kutt_id}/stats",
+                    f"https://kutt-production-0880.up.railway.app/api/v2/links/stats?id={kutt_id}"
+                ]
+                stats_data = None
+                for stats_url in stats_urls:
+                    try:
+                        async with session.get(stats_url, headers=headers) as resp:
+                            if resp.status == 200:
+                                stats_data = await resp.json()
+                                break
+                    except Exception as e:
+                        logging.error(f"Error fetching stats from {stats_url}: {e}")
 
-                            # 1. منابع ورود (Referrers)
-                            refs = stats_data.get("referrers", [])
-                            if refs:
-                                ref_list = []
-                                for item in refs[:5]:
-                                    name = item.get('_id') or item.get('name') or 'Direct/مستقیم'
-                                    cnt = item.get('count') or item.get('clicks') or 0
-                                    ref_list.append(f"• {name}: {cnt} بار")
-                                if ref_list:
-                                    referrers_text = "\n" + "\n".join(ref_list)
+                if stats_data:
+                    total_clicks = (
+                        stats_data.get("total_views") or 
+                        stats_data.get("total_clicks") or 
+                        stats_data.get("views") or 
+                        stats_data.get("clicks") or 0
+                    )
+                    if isinstance(total_clicks, dict):
+                        total_clicks = total_clicks.get("count", 0)
 
-                            # 2. مرورگرها (Browsers)
-                            browsers = stats_data.get("browsers", [])
-                            if browsers:
-                                b_list = []
-                                for item in browsers[:5]:
-                                    name = item.get('_id') or item.get('name') or 'سایر'
-                                    cnt = item.get('count') or item.get('clicks') or 0
-                                    b_list.append(f"• {name}: {cnt} بار")
-                                if b_list:
-                                    browsers_text = "\n" + "\n".join(b_list)
+                    # 1. منابع ورود (Referrers)
+                    refs = stats_data.get("referrers", []) or stats_data.get("refs", [])
+                    if refs:
+                        ref_list = []
+                        for item in refs[:5]:
+                            name = item.get('_id') or item.get('name') or item.get('label') or 'Direct/مستقیم'
+                            cnt = item.get('count') or item.get('clicks') or item.get('views') or 0
+                            ref_list.append(f"• {name}: {cnt} بار")
+                        if ref_list:
+                            referrers_text = "\n" + "\n".join(ref_list)
 
-                            # 3. کشورها (Countries)
-                            countries = stats_data.get("countries", [])
-                            if countries:
-                                c_list = []
-                                for item in countries[:5]:
-                                    name = item.get('_id') or item.get('name') or 'سایر'
-                                    cnt = item.get('count') or item.get('clicks') or 0
-                                    c_list.append(f"• {name}: {cnt} بار")
-                                if c_list:
-                                    countries_text = "\n" + "\n".join(c_list)
+                    # 2. مرورگرها (Browsers)
+                    browsers = stats_data.get("browsers", [])
+                    if browsers:
+                        b_list = []
+                        for item in browsers[:5]:
+                            name = item.get('_id') or item.get('name') or item.get('label') or 'سایر'
+                            cnt = item.get('count') or item.get('clicks') or item.get('views') or 0
+                            b_list.append(f"• {name}: {cnt} بار")
+                        if b_list:
+                            browsers_text = "\n" + "\n".join(b_list)
 
-                            # 4. سیستم‌عامل‌ها (Operating Systems)
-                            os_list_data = stats_data.get("os", [])
-                            if os_list_data:
-                                o_list = []
-                                for item in os_list_data[:5]:
-                                    name = item.get('_id') or item.get('name') or 'سایر'
-                                    cnt = item.get('count') or item.get('clicks') or 0
-                                    o_list.append(f"• {name}: {cnt} بار")
-                                if o_list:
-                                    os_text = "\n" + "\n".join(o_list)
-                except Exception as e:
-                    logging.error(f"Error fetching stats from Kutt: {e}")
+                    # 3. کشورها (Countries)
+                    countries = stats_data.get("countries", [])
+                    if countries:
+                        c_list = []
+                        for item in countries[:5]:
+                            name = item.get('_id') or item.get('name') or item.get('label') or 'سایر'
+                            cnt = item.get('count') or item.get('clicks') or item.get('views') or 0
+                            c_list.append(f"• {name}: {cnt} بار")
+                        if c_list:
+                            countries_text = "\n" + "\n".join(c_list)
+
+                    # 4. سیستم‌عامل‌ها (Operating Systems)
+                    os_list_data = stats_data.get("os", []) or stats_data.get("operating_systems", [])
+                    if os_list_data:
+                        o_list = []
+                        for item in os_list_data[:5]:
+                            name = item.get('_id') or item.get('name') or item.get('label') or 'سایر'
+                            cnt = item.get('count') or item.get('clicks') or item.get('views') or 0
+                            o_list.append(f"• {name}: {cnt} بار")
+                        if o_list:
+                            os_text = "\n" + "\n".join(o_list)
 
         if password:
             pass_text = f"🔒 رمز عبور: {password}"
@@ -830,4 +841,3 @@ async def main() -> None:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, stream=sys.stdout)
     asyncio.run(main())
-    
